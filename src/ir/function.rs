@@ -132,6 +132,9 @@ impl FunctionGenerator<'_> {
     pub fn emit_gep(&mut self, new_ptr: Operand, base_ptr: Operand, index: Operand) {
         self.irs.push(Stmt::as_gep(new_ptr, base_ptr, index));
     }
+    pub fn emit_cast(&mut self, src: Operand, ty: Dtype, dst: Operand) {
+        self.irs.push(Stmt::as_cast(src, ty, dst));
+    }
 
     pub fn emit_biop(&mut self, op: ArithBinOp, left: Operand, right: Operand, dst: Operand) {
         self.irs.push(Stmt::as_biop(op, left, right, dst));

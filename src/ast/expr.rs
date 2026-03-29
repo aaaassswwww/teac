@@ -1,3 +1,5 @@
+use crate::ast::TypeSpecifier;
+
 use super::ops::*;
 use super::types::Pos;
 
@@ -47,13 +49,31 @@ pub struct ArithBiOpExpr {
 #[derive(Debug, Clone)]
 pub enum ArithExprInner {
     ArithBiOpExpr(Box<ArithBiOpExpr>),
-    ExprUnit(Box<ExprUnit>),
+    CastExpr(Box<CastExpr>),
 }
 
 #[derive(Debug, Clone)]
 pub struct ArithExpr {
     pub pos: Pos,
     pub inner: ArithExprInner,
+}
+
+#[derive(Debug, Clone)]
+pub struct CastOpExpr {
+    pub expr: Box<ExprUnit>,
+    pub type_specifier: Option<TypeSpecifier>
+}
+
+#[derive(Debug, Clone)]
+pub enum CastExprInner {
+    CastOpExpr(Box<CastOpExpr>),
+    ExprUnit(Box<ExprUnit>),
+}
+
+#[derive(Debug, Clone)]
+pub struct CastExpr {
+    pub pos: Pos,
+    pub inner: CastExprInner,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +142,7 @@ impl FnCall {
 #[derive(Debug, Clone)]
 pub enum ExprUnitInner {
     Num(i32),
+    Float(f32),
     Id(String),
     ArithExpr(Box<ArithExpr>),
     FnCall(Box<FnCall>),

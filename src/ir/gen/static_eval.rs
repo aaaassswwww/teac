@@ -10,10 +10,17 @@ impl IrGenerator<'_> {
         }
     }
 
+    pub fn handle_cast_expr_static(expr: &ast::expr::CastExpr) -> Result<i32, Error> {
+        match &expr.inner {
+            ast::expr::CastExprInner::CastOpExpr(expr) => Self::handle_cast_op_expr_static(expr),
+            ast::expr::CastExprInner::ExprUnit(unit) => Self::handle_expr_unit_static(unit),
+        }
+    }
+
     pub fn handle_arith_expr_static(expr: &ast::ArithExpr) -> Result<i32, Error> {
         match &expr.inner {
             ast::ArithExprInner::ArithBiOpExpr(expr) => Self::handle_arith_biop_expr_static(expr),
-            ast::ArithExprInner::ExprUnit(unit) => Self::handle_expr_unit_static(unit),
+            ast::ArithExprInner::CastExpr(cast) => Self::handle_cast_expr_static(cast),
         }
     }
 
@@ -24,6 +31,21 @@ impl IrGenerator<'_> {
         }
     }
 
+    pub fn handle_cast_op_expr_static(expr: &ast::expr::CastOpExpr) -> Result<i32, Error> {
+        let src = Self::handle_expr_unit_static(&expr.expr)?;
+        let target_ts = expr.type_specifier.as_ref().expect("cast missing type");
+
+        match &target_ts.inner {
+            ast::TypeSpecifierInner::BuiltIn(ast::BuiltIn::Int) => {
+                Ok(src)
+            },
+
+            _ => Err(Error::InvalidCast),
+            
+        }
+
+    }
+    
     pub fn handle_arith_biop_expr_static(expr: &ast::ArithBiOpExpr) -> Result<i32, Error> {
         let left = Self::handle_arith_expr_static(&expr.left)?;
         let right = Self::handle_arith_expr_static(&expr.right)?;

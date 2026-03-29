@@ -459,6 +459,7 @@ impl<'ir> FunctionGenerator<'ir> {
             ast::ExprUnitInner::Reference(id) => {
                 return self.handle_reference_expr(id);
             }
+            _ => todo!(),
         }?;
 
         Ok(match operand.dtype() {
@@ -505,10 +506,18 @@ impl<'ir> FunctionGenerator<'ir> {
         Ok(target)
     }
 
+    fn handle_cast_expr(&mut self, expr: &ast::expr::CastExpr) -> Result<Operand, Error> {
+        match &expr.inner {
+            ast::expr::CastExprInner::CastOpExpr(expr) => self.handle_cast_op_expr(expr),
+            ast::expr::CastExprInner::ExprUnit(unit) => self.handle_expr_unit(unit),
+        }
+
+    }
+
     fn handle_arith_expr(&mut self, expr: &ast::ArithExpr) -> Result<Operand, Error> {
         match &expr.inner {
             ast::ArithExprInner::ArithBiOpExpr(expr) => self.handle_arith_biop_expr(expr),
-            ast::ArithExprInner::ExprUnit(unit) => self.handle_expr_unit(unit),
+            ast::ArithExprInner::CastExpr(cast) => self.handle_cast_expr(cast),
         }
     }
 
@@ -589,6 +598,19 @@ impl<'ir> FunctionGenerator<'ir> {
             ast::LeftValInner::ArrayExpr(expr) => self.handle_array_expr(expr),
             ast::LeftValInner::MemberExpr(expr) => self.handle_member_expr(expr),
         }
+    }
+
+    fn handle_cast_op_expr(&mut self, expr: &ast::expr::CastOpExpr) -> Result<Operand, Error> {
+        // 先计算被转换的表达式
+        let src = self.handle_expr_unit(&expr.expr)?;
+
+        let target_ts = expr.type_specifier.as_ref().expect("cast missing type");
+        let dtype = Dtype::from(target_ts);
+        // 分配一个临时变量存放转换后的值
+        let dst = self.alloc_temporary(dtype.clone());
+        // 发射类型转换指令（具体方法取决于后端设计）
+        self.emit_cast(src, dtype, dst.clone());
+        Ok(dst)
     }
 
     fn handle_arith_biop_expr(&mut self, expr: &ast::ArithBiOpExpr) -> Result<Operand, Error> {

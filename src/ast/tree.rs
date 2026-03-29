@@ -518,7 +518,7 @@ impl DisplayAsTree for ArithExpr {
         new_indent.push(is_last);
         match &self.inner {
             ArithExprInner::ArithBiOpExpr(expr) => expr.fmt_tree(f, &new_indent, true),
-            ArithExprInner::ExprUnit(unit) => unit.fmt_tree(f, &new_indent, true),
+            ArithExprInner::CastExpr(unit) => unit.fmt_tree(f, &new_indent, true),
         }
     }
 }
@@ -584,6 +584,53 @@ impl DisplayAsTree for ArithBiOpExpr {
     }
 }
 
+impl DisplayAsTree for CastOpExpr {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}CastOpExpr", tree_indent(indent_levels, is_last))?;
+        let mut new_indent = indent_levels.to_vec();
+        new_indent.push(is_last);
+        // 先格式化表达式，再格式化目标类型
+        self.expr.fmt_tree(f, &new_indent, false)?;
+        let type_str = self
+            .type_specifier
+            .as_ref()
+            .map_or("unknown".to_string(), |ts| ts.to_string());
+        writeln!(
+            f,
+            "{}{}type_specifier: {}",
+            tree_indent(&new_indent, true),
+            "  ",
+            type_str
+        )?;
+        Ok(())
+    }
+}
+
+impl DisplayAsTree for CastExpr {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        // 打印当前节点名称
+        writeln!(f, "{}CastExpr", tree_indent(indent_levels, is_last))?;
+        // 构建子节点缩进
+        let mut new_indent = indent_levels.to_vec();
+        new_indent.push(is_last);
+        // 根据 inner 枚举调用对应的子节点格式化
+        match &self.inner {
+            CastExprInner::CastOpExpr(cast_op) => cast_op.fmt_tree(f, &new_indent, true),
+            CastExprInner::ExprUnit(unit) => unit.fmt_tree(f, &new_indent, true),
+        }
+    }
+}
+
 impl DisplayAsTree for ExprUnit {
     fn fmt_tree(
         &self,
@@ -596,6 +643,7 @@ impl DisplayAsTree for ExprUnit {
         new_indent.push(is_last);
         match &self.inner {
             ExprUnitInner::Num(n) => writeln!(f, "{}Num({})", tree_indent(&new_indent, true), n),
+            ExprUnitInner::Float(fl) => writeln!(f, "{}Float({})", tree_indent(&new_indent, true), fl),
             ExprUnitInner::Id(id) => writeln!(f, "{}Id({})", tree_indent(&new_indent, true), id),
             ExprUnitInner::ArithExpr(ae) => ae.fmt_tree(f, &new_indent, true),
             ExprUnitInner::FnCall(fc) => fc.fmt_tree(f, &new_indent, true),

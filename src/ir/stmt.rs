@@ -3,7 +3,7 @@ use crate::ast;
 use super::function::BlockLabel;
 use super::types::Dtype;
 use super::value::Operand;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Display, Formatter, write};
 
 #[derive(Clone)]
 pub enum ArithBinOp {
@@ -76,6 +76,7 @@ pub enum StmtInner {
     Call(CallStmt),
     Load(LoadStmt),
     Phi(PhiStmt),
+    Cast(CastStmt),
     BiOp(BiOpStmt),
     Alloca(AllocaStmt),
     Cmp(CmpStmt),
@@ -131,6 +132,12 @@ impl Stmt {
     pub fn as_phi(dst: Operand, incomings: Vec<(BlockLabel, Operand)>) -> Self {
         Self {
             inner: StmtInner::Phi(PhiStmt { dst, incomings }),
+        }
+    }
+
+    pub fn as_cast(src: Operand, ty: Dtype, dst: Operand) -> Self {
+        Self {
+            inner: StmtInner::Cast(CastStmt { src, ty, dst }),
         }
     }
 
@@ -212,6 +219,7 @@ impl Display for Stmt {
         match &self.inner {
             StmtInner::Alloca(s) => write!(f, "\t{}", s),
             StmtInner::BiOp(s) => write!(f, "\t{}", s),
+            StmtInner::Cast(s) => write!(f, "\t{}", s),
             StmtInner::CJump(s) => write!(f, "\t{}", s),
             StmtInner::Call(s) => write!(f, "\t{}", s),
             StmtInner::Cmp(s) => write!(f, "\t{}", s),
@@ -222,6 +230,7 @@ impl Display for Stmt {
             StmtInner::Return(s) => write!(f, "\t{}", s),
             StmtInner::Store(s) => write!(f, "\t{}", s),
             StmtInner::Jump(s) => write!(f, "\t{}", s),
+            _ => todo!(),
         }
     }
 }
@@ -243,6 +252,13 @@ pub struct LoadStmt {
 pub struct PhiStmt {
     pub dst: Operand,
     pub incomings: Vec<(BlockLabel, Operand)>,
+}
+
+#[derive(Clone)]
+pub struct CastStmt {
+    pub src: Operand,   // 源操作数
+    pub ty: Dtype,      // 目标类型
+    pub dst: Operand,   // 存放转换结果的临时变量
 }
 
 #[derive(Clone)]
@@ -377,6 +393,19 @@ impl Display for AllocaStmt {
     }
 }
 
+
+impl Display for CastStmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} = cast({}, {})",
+            self.dst,
+            self.src,
+            self.ty,
+        )
+    }
+}
+
 impl Display for BiOpStmt {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
@@ -507,6 +536,16 @@ impl Stmt {
                     role: StorePtr,
                 });
             }
+            StmtInner::Cast(s) => {
+                ops.push(OperandRef {
+                    operand: &s.dst,
+                    role: Def,
+                });
+                ops.push(OperandRef {
+                    operand: &s.src,
+                    role: Use,
+                });
+            }
             StmtInner::BiOp(s) => {
                 ops.push(OperandRef {
                     operand: &s.dst,
@@ -624,6 +663,7 @@ impl Stmt {
             }
             StmtInner::Label(s) => Stmt::as_label(s.label.clone()),
             StmtInner::Jump(s) => Stmt::as_jump(s.target.clone()),
+            _ => todo!(),
         }
     }
 }

@@ -14,6 +14,15 @@ pub enum Error {
         source: std::num::ParseIntError,
     },
 
+    #[error("invalid float literal")]
+    InvalidFloat {
+        literal: String,
+        line: usize,
+        column: usize,
+        #[source]
+        source: std::num::ParseFloatError,
+    },
+
     #[error("I/O error")]
     Io(#[from] std::io::Error),
 
@@ -74,6 +83,19 @@ pub(crate) fn parse_num(pair: Pair) -> ParseResult<i32> {
     let (line, column) = pair.as_span().start_pos().line_col();
 
     literal.parse().map_err(|source| Error::InvalidNumber {
+        literal,
+        line,
+        column,
+        source,
+    })
+}
+
+
+pub(crate) fn parse_float(pair: Pair) -> ParseResult<f32> {
+    let literal = pair.as_str().to_string();
+    let (line, column) = pair.as_span().start_pos().line_col();
+
+    literal.parse().map_err(|source| Error::InvalidFloat {
         literal,
         line,
         column,

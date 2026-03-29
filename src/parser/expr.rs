@@ -1,4 +1,6 @@
 use crate::ast;
+use crate::ast::expr::{CastExpr, CastExprInner, CastOpExpr};
+use crate::parser::common::parse_float;
 
 use super::common::{get_pos, grammar_error, parse_num, Pair, ParseResult, Rule};
 use super::ParseContext;
@@ -257,20 +259,20 @@ impl<'a> ParseContext<'a> {
             return Err(grammar_error("arith_term", &pair_for_error));
         }
 
-        let first_unit = self.parse_expr_unit(inner_pairs[0].clone())?;
+        let first_unit = self.parse_cast_expr(inner_pairs[0].clone())?;
         let mut expr = Box::new(ast::ArithExpr {
             pos: first_unit.pos,
-            inner: ast::ArithExprInner::ExprUnit(first_unit),
+            inner: ast::ArithExprInner::CastExpr(first_unit),
         });
 
         let mut i = 1;
         while i < inner_pairs.len() {
             if inner_pairs[i].as_rule() == Rule::arith_mul_op {
                 let op = self.parse_arith_mul_op(inner_pairs[i].clone())?;
-                let right_unit = self.parse_expr_unit(inner_pairs[i + 1].clone())?;
+                let right_unit = self.parse_cast_expr(inner_pairs[i + 1].clone())?;
                 let right = Box::new(ast::ArithExpr {
                     pos: right_unit.pos,
-                    inner: ast::ArithExprInner::ExprUnit(right_unit),
+                    inner: ast::ArithExprInner::CastExpr(right_unit),
                 });
 
                 expr = Box::new(ast::ArithExpr {
@@ -314,16 +316,81 @@ impl<'a> ParseContext<'a> {
         Err(grammar_error("arith_mul_op", &pair_for_error))
     }
 
+    fn parse_cast_expr(&self, pair: Pair) -> ParseResult<Box<CastExpr>> {
+        let pair_for_error = pair.clone();
+        let pos = get_pos(&pair);
+        let inner_pairs: Vec<_> = pair.into_inner().collect();
+
+
+// eprintln!("inner_pairs:");
+// for p in &inner_pairs {
+//     eprintln!("  {:?}: {:?}", p.as_rule(), p.as_str());
+// }
+
+        if inner_pairs.is_empty() {
+            return Err(grammar_error("cast_expr", &pair_for_error));
+        }
+
+        // 第一个子节点总是 expr_unit
+        let expr = self.parse_expr_unit(inner_pairs[0].clone())?;
+
+        // 根据子节点数量判断是否有类型转换
+        match inner_pairs.len() {
+            1 => {
+                // 只有 expr_unit，无转换
+                Ok(Box::new(CastExpr {
+                    pos,
+                    inner: CastExprInner::ExprUnit(expr),
+                }))
+            }
+            2 => {
+                // 结构为: [expr_unit, as_keyword, type_spec]
+                if inner_pairs[1].as_rule() == Rule::type_spec {  // 根据实际规则名调整
+                    let type_specifier = self.parse_type_spec(inner_pairs[1].clone())?;
+                    Ok(Box::new(CastExpr {
+                        pos,
+                        inner: CastExprInner::CastOpExpr(Box::new(CastOpExpr {
+                            expr,
+                            type_specifier,
+                        })),
+                    }))
+                } else {
+                    Err(grammar_error("cast_expr: expected 'as'", &pair_for_error))
+                }
+            }
+            _ => {
+                // 其他长度（如长度为2）为语法错误
+                Err(grammar_error("cast_expr: invalid structure", &pair_for_error))
+            }
+        }
+    }
+
     pub(crate) fn parse_expr_unit(&self, pair: Pair) -> ParseResult<Box<ast::ExprUnit>> {
         let pair_for_error = pair.clone();
         let pos = get_pos(&pair);
         let inner_pairs: Vec<_> = pair.into_inner().collect();
+
+// eprintln!("expr_unit_inner_pairs:");
+// for p in &inner_pairs {
+//     eprintln!("  {:?}: {:?}", p.as_rule(), p.as_str());
+// }
 
         let filtered: Vec<_> = inner_pairs
             .iter()
             .filter(|p| !matches!(p.as_rule(), Rule::lparen | Rule::rparen))
             .cloned()
             .collect();
+
+        if filtered.len() == 2
+            && filtered[0].as_rule() == Rule::op_sub
+                && filtered[1].as_rule() == Rule::float
+        {
+            let float = parse_float(filtered[1].clone())?;
+            return Ok(Box::new(ast::ExprUnit {
+                pos,
+                inner: ast::ExprUnitInner::Float(-float),
+            }));
+        }
 
         if filtered.len() == 2
             && filtered[0].as_rule() == Rule::op_sub
@@ -335,6 +402,7 @@ impl<'a> ParseContext<'a> {
                 inner: ast::ExprUnitInner::Num(-num),
             }));
         }
+
 
         if filtered.len() == 1 && filtered[0].as_rule() == Rule::arith_expr {
             return Ok(Box::new(ast::ExprUnit {
@@ -350,6 +418,14 @@ impl<'a> ParseContext<'a> {
             }));
         }
 
+        if filtered.len() == 1 && filtered[0].as_rule() == Rule::float {
+            let float = parse_float(filtered[0].clone())?;
+            return Ok(Box::new(ast::ExprUnit {
+                pos,
+                inner: ast::ExprUnitInner::Float(float),
+            }));
+        }
+
         if filtered.len() == 1 && filtered[0].as_rule() == Rule::num {
             let num = parse_num(filtered[0].clone())?;
             return Ok(Box::new(ast::ExprUnit {
@@ -357,6 +433,8 @@ impl<'a> ParseContext<'a> {
                 inner: ast::ExprUnitInner::Num(num),
             }));
         }
+
+
 
         if filtered.len() == 2
             && filtered[0].as_rule() == Rule::ampersand

@@ -9,6 +9,7 @@ impl Display for BuiltIn {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             BuiltIn::Int => write!(f, "int"),
+            BuiltIn::Float => write!(f, "int"),
         }
     }
 }
@@ -19,6 +20,7 @@ impl Display for TypeSpecifierInner {
             TypeSpecifierInner::BuiltIn(b) => write!(f, "{}", b),
             TypeSpecifierInner::Composite(name) => write!(f, "{}", name),
             TypeSpecifierInner::Reference(inner) => write!(f, "&[{}]", inner.inner),
+            TypeSpecifierInner::Array(inner, a) => write!(f, "[{}; {}]", inner.inner, a),
         }
     }
 }
@@ -71,6 +73,35 @@ impl Display for ComOp {
     }
 }
 
+// 为 CastOpExpr 实现 Display
+impl Display for CastOpExpr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        // 格式: (expr as target_type)
+        let type_str = self
+            .type_specifier
+            .as_ref()
+            .map_or("unknown".to_string(), |ts| ts.to_string());
+        write!(f, "({} as {})", self.expr, type_str)
+    }
+}
+
+// 为 CastExprInner 实现 Display
+impl Display for CastExprInner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        match self {
+            CastExprInner::CastOpExpr(op) => write!(f, "{}", op),
+            CastExprInner::ExprUnit(unit) => write!(f, "{}", unit),
+        }
+    }
+}
+
+// 为 CastExpr 实现 Display
+impl Display for CastExpr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{}", self.inner)
+    }
+}
+
 impl Display for ArithBiOpExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         write!(f, "({} {} {})", self.left, self.op, self.right)
@@ -81,7 +112,7 @@ impl Display for ArithExprInner {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             ArithExprInner::ArithBiOpExpr(expr) => write!(f, "{}", expr),
-            ArithExprInner::ExprUnit(unit) => write!(f, "{}", unit),
+            ArithExprInner::CastExpr(cast) => write!(f, "{}", cast),
         }
     }
 }
@@ -208,6 +239,7 @@ impl Display for ExprUnitInner {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             ExprUnitInner::Num(n) => write!(f, "{}", n),
+            ExprUnitInner::Float(fl) => write!(f, "{}", fl),
             ExprUnitInner::Id(id) => write!(f, "{}", id),
             ExprUnitInner::ArithExpr(a) => write!(f, "{}", a),
             ExprUnitInner::FnCall(fc) => write!(f, "{}", fc),
