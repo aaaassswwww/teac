@@ -171,7 +171,17 @@ impl UnionFind {
         //
         // The core invariant you are maintaining: **every equivalence class
         // has at most one concrete type**.
-        todo!("asmt-2 §3.3: UnionFind::bind")
+        let root = self.find(x);
+        match self.concrete[root] {
+            None => {
+                self.concrete[root] = Some(dtype);
+            }
+            Some(val) => {
+                if val != dtype {
+                    return Err(Error::TypeMismatch(symbol.to_string()));
+                }
+            }
+        }
     }
 
     /// Merge the equivalence classes containing `a` and `b` (union by rank).
@@ -203,7 +213,58 @@ impl UnionFind {
         //      bump its rank by 1.
         //   4. Write the merged concrete binding into the chosen root's
         //      slot; the other slot is unused from now on.
-        todo!("asmt-2 §3.3: UnionFind::union")
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb{
+            return Ok(());
+        }
+        match (self.concrete[ra], self.concrete[rb]) {
+            (None, None) => {
+                return Ok(());
+            }
+            (Some(val), None) => {
+                if self.rank[ra] < self.rank[rb] {
+                    self.parent[ra] = rb; 
+                    self.concrete[rb] = Some(val);
+                } else if self.rank[ra] > self.rank[rb]{
+                    self.parent[rb] = ra;
+                    self.concrete[ra] = Some(val);
+                } else {
+                    self.parent[rb] = ra;
+                    self.concrete[ra] = Some(val);
+                    self.rank[ra] += 1;
+                }
+            }
+            (None, Some(val)) => {
+                if self.rank[ra] < self.rank[rb] {
+                    self.parent[ra] = rb; 
+                    self.concrete[rb] = Some(val);
+                } else if self.rank[ra] > self.rank[rb]{
+                    self.parent[rb] = ra;
+                    self.concrete[ra] = Some(val);
+                } else {
+                    self.parent[rb] = ra;
+                    self.concrete[ra] = Some(val);
+                    self.rank[ra] += 1;
+                }
+            }
+            (Some(T1), Some(T2)) => {
+                if T1 == T2 {
+                    if self.rank[ra] < self.rank[rb] {
+                        self.parent[ra] = rb; 
+                    } else if self.rank[ra] > self.rank[rb]{
+                        self.parent[rb] = ra;
+                    } else {
+                        self.parent[rb] = ra;
+                        self.rank[ra] += 1;
+                    }
+                } else {
+                    return Err(Error::TypeMismatch(symbol.to_string()));   
+                }
+            }
+            
+        }
+
     }
 
     /// Return the concrete type currently bound to `x`'s equivalence class,
@@ -216,7 +277,8 @@ impl UnionFind {
         // Return `self.concrete[find(x)].clone()`.  Make sure to go through
         // `find` so that path compression is triggered and the answer
         // reflects all unions performed so far.
-        todo!("asmt-2 §3.3: UnionFind::resolve")
+        let root = self.find(x);
+        return self.concrete[root].clone();
     }
 }
 
@@ -243,7 +305,22 @@ fn unify(uf: &mut UnionFind, a: &Ty, b: &Ty, symbol: &str) -> Result<(), Error> 
     // UnionFind operations do (`Error::TypeMismatch { symbol, expected,
     // actual }`) so the diagnostic stays consistent regardless of which
     // branch fails.
-    todo!("asmt-2 §3.4: unify — three cases")
+    match(a, b) {
+        (Ty::Concrete(x), Ty::Concrete(y)) => {
+            if x != y {
+                return Err(Error::TypeMismatch(symbol.to_string()));
+            }
+        }
+        (Ty::Var(v), Ty::Concrete(c)) => {
+            uf.bind(v,c,symbol);
+        }
+        (Ty::Concrete(c), Ty::Var(v)) => {
+            uf.bind(v,c,symbol);
+        }
+        (Ty::Var(x), Ty::Var(y)) => {
+            uf.union(x,y,symbol);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +576,11 @@ impl Collector<'_> {
         // educational point is: a declared type on the LHS becomes a
         // `unify(lhs, rhs)` constraint rather than a direct equality
         // check, which is the only change from `type_infer.rs`'s R2 rule.
-        todo!("asmt-2: process_var_def")
+        match &def.inner {
+            VarDefInner::Scalar => {
+                let rhs:Ty = self.type_of_right_val(&scalar)
+            }
+        }
     }
 
     fn check_array_initializer(&mut self, init: &ast::ArrayInitializer) -> Result<(), Error> {
