@@ -495,6 +495,7 @@ impl FunctionGenerator<'_> {
     fn handle_expr_unit(&mut self, unit: &ast::ExprUnit) -> Result<Operand, Error> {
         let operand = match &unit.inner {
             ast::ExprUnitInner::Num(num) => Ok(Operand::from(*num)),
+            ast::ExprUnitInner::Float(num) => Ok(Operand::from(*num)),
             ast::ExprUnitInner::Id(id) => {
                 let op = self.lookup_variable(id)?;
                 // Arrays cannot be used directly as scalar values.
@@ -602,11 +603,18 @@ impl FunctionGenerator<'_> {
         Ok(target)
     }
 
+    fn handle_cast_expr(&mut self, expr: &ast::expr::CastExpr) -> Result<Operand, Error> {
+        match &expr.inner {
+            ast::expr::CastExprInner::CastOpExpr(expr) => self.handle_cast_op_expr(expr),
+            ast::expr::CastExprInner::ExprUnit(unit) => self.handle_expr_unit(unit),
+        }
+    }
+
     /// Lowers an arithmetic expression (binary operation or a single unit).
     fn handle_arith_expr(&mut self, expr: &ast::ArithExpr) -> Result<Operand, Error> {
         match &expr.inner {
             ast::ArithExprInner::ArithBiOpExpr(expr) => self.handle_arith_biop_expr(expr),
-            ast::ArithExprInner::ExprUnit(unit) => self.handle_expr_unit(unit),
+            ast::ArithExprInner::CastExpr(cast) => self.handle_cast_expr(cast),
         }
     }
 
@@ -706,6 +714,15 @@ impl FunctionGenerator<'_> {
             ast::LeftValInner::ArrayExpr(expr) => self.handle_array_expr(expr),
             ast::LeftValInner::MemberExpr(expr) => self.handle_member_expr(expr),
         }
+    }
+
+    fn handle_cast_op_expr(&mut self, expr: &ast::expr::CastOpExpr) -> Result<Operand, Error> {
+        let src = self.handle_expr_unit(&expr.expr)?;
+        let target_ts = expr.type_specifier.as_ref().expect("cast missing type");
+        let dtype = Dtype::from(target_ts);
+        let dst = Operand::from(self.fresh_local(dtype.clone()));
+        self.emit_cast(src, dtype, dst.clone());
+        Ok(dst)
     }
 
     /// Lowers a binary arithmetic expression (`left op right`) to an `i32` temporary.

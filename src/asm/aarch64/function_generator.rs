@@ -635,6 +635,7 @@ impl<'a> FunctionGenerator<'a> {
             Phi(_) => Err(Error::Internal(
                 "phi nodes should be lowered before assembly emission".into(),
             )),
+            _ => todo!(),
         }
     }
 

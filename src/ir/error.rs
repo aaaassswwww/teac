@@ -77,6 +77,8 @@ pub enum Error {
     #[error("Invalid expression unit: {expr_unit}")]
     InvalidExprUnit { expr_unit: ast::ExprUnit },
 
+    #[error("Invalid cast")]
+    InvalidCast,
     #[error("Invalid continue instruction")]
     InvalidContinueInst,
 

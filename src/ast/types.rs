@@ -13,6 +13,7 @@ pub type Pos = usize;
 pub enum BuiltIn {
     /// The 32-bit signed integer type (`int`).
     Int,
+    Float,
 }
 
 /// The inner representation of a type specifier, distinguishing between
@@ -25,6 +26,7 @@ pub enum TypeSpecifierInner {
     Composite(String),
     /// A reference to another type specifier (e.g., `&int`).
     Reference(Box<TypeSpecifier>),
+    Array(Box<TypeSpecifier>, i32),
 }
 
 /// A fully-annotated type specifier, pairing the type's inner representation

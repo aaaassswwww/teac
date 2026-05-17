@@ -418,18 +418,43 @@ impl TypeInference<'_> {
     fn type_of_arith_expr(&self, expr: &ast::ArithExpr) -> Result<Dtype, Error> {
         match &expr.inner {
             ast::ArithExprInner::ArithBiOpExpr(biop) => {
-                self.type_of_arith_expr(&biop.left)?;
-                self.type_of_arith_expr(&biop.right)?;
-                Ok(Dtype::I32)
+                let left = self.type_of_arith_expr(&biop.left)?;
+                let right = self.type_of_arith_expr(&biop.right)?;
+                if left == right {
+                    Ok(left)
+                } else {
+                    Err(Error::TypeMismatch {
+                        symbol: "<arith-expr>".to_string(),
+                        expected: left,
+                        actual: right,
+                    })
+                }
             }
-            ast::ArithExprInner::ExprUnit(unit) => self.type_of_expr_unit(unit),
+            ast::ArithExprInner::CastExpr(expr) => self.type_of_cast_expr(expr),
         }
+    }
+
+    fn type_of_cast_expr(&self, expr: &ast::expr::CastExpr) -> Result<Dtype, Error> {
+        match &expr.inner {
+            ast::expr::CastExprInner::CastOpExpr(expr) => self.type_of_cast_op_expr(expr),
+            ast::expr::CastExprInner::ExprUnit(unit) => self.type_of_expr_unit(unit),
+        }
+    }
+
+    fn type_of_cast_op_expr(&self, expr: &ast::expr::CastOpExpr) -> Result<Dtype, Error> {
+        self.type_of_expr_unit(&expr.expr)?;
+        Ok(expr
+            .type_specifier
+            .as_ref()
+            .map(Dtype::from)
+            .unwrap_or(Dtype::I32))
     }
 
     /// Compute the type of a leaf expression unit.
     fn type_of_expr_unit(&self, unit: &ast::ExprUnit) -> Result<Dtype, Error> {
         match &unit.inner {
             ast::ExprUnitInner::Num(_) => Ok(Dtype::I32),
+            ast::ExprUnitInner::Float(_) => Ok(Dtype::F32),
             ast::ExprUnitInner::Id(id) => self.resolve_variable(id),
             ast::ExprUnitInner::ArithExpr(expr) => self.type_of_arith_expr(expr),
             ast::ExprUnitInner::FnCall(call) => self.type_of_fn_call(call),

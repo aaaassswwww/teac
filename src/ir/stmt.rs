@@ -3,7 +3,7 @@ use crate::ast;
 use super::function::BlockLabel;
 use super::types::Dtype;
 use super::value::Operand;
-use std::{fmt::{self, Display, Formatter, write}, vec};
+use std::{fmt::{self, Display, Formatter}, vec};
 
 #[derive(Clone)]
 pub enum ArithBinOp {
@@ -76,6 +76,7 @@ pub enum StmtInner {
     Call(CallStmt),
     Load(LoadStmt),
     Phi(PhiStmt),
+    Cast(CastStmt),
     BiOp(BiOpStmt),
     FBiOp(FBiOpStmt),
     Alloca(AllocaStmt),
@@ -141,6 +142,12 @@ impl Stmt {
     pub fn as_phi(dst: Operand, incomings: Vec<(BlockLabel, Operand)>) -> Self {
         Self {
             inner: StmtInner::Phi(PhiStmt { dst, incomings }),
+        }
+    }
+
+    pub fn as_cast(src: Operand, ty: Dtype, dst: Operand) -> Self {
+        Self {
+            inner: StmtInner::Cast(CastStmt { src, ty, dst }),
         }
     }
 
@@ -252,6 +259,7 @@ impl Display for Stmt {
         match &self.inner {
             StmtInner::Alloca(s) => write!(f, "\t{s}"),
             StmtInner::BiOp(s) => write!(f, "\t{s}"),
+            StmtInner::Cast(s) => write!(f, "\t{s}"),
             StmtInner::FBiOp(s) => write!(f, "\t{s}"),
             StmtInner::CJump(s) => write!(f, "\t{s}"),
             StmtInner::Call(s) => write!(f, "\t{s}"),
@@ -290,6 +298,13 @@ pub struct LoadStmt {
 pub struct PhiStmt {
     pub dst: Operand,
     pub incomings: Vec<(BlockLabel, Operand)>,
+}
+
+#[derive(Clone)]
+pub struct CastStmt {
+    pub src: Operand,
+    pub ty: Dtype,
+    pub dst: Operand,
 }
 
 #[derive(Clone)]
@@ -440,6 +455,12 @@ impl Display for AllocaStmt {
     }
 }
 
+impl Display for CastStmt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = cast({}, {})", self.dst, self.src, self.ty)
+    }
+}
+
 impl Display for BiOpStmt {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let Self {
@@ -584,6 +605,7 @@ impl Stmt {
             StmtInner::Alloca(s) => vec![r(&s.dst, Def)],
             StmtInner::Load(s) => vec![r(&s.dst, Def), r(&s.ptr, LoadPtr)],
             StmtInner::Store(s) => vec![r(&s.src, Use), r(&s.ptr, StorePtr)],
+            StmtInner::Cast(s) => vec![r(&s.dst, Def), r(&s.src, Use)],
             StmtInner::BiOp(s) => vec![r(&s.dst, Def), r(&s.left, Use), r(&s.right, Use)],
             StmtInner::FBiOp(s) => vec![r(&s.dst, Def), r(&s.left, Use), r(&s.right, Use)],
             StmtInner::Cmp(s) => vec![r(&s.dst, Def), r(&s.left, Use), r(&s.right, Use)],
@@ -620,6 +642,7 @@ impl Stmt {
             StmtInner::Alloca(s) => Stmt::as_alloca(s.dst.clone()),
             StmtInner::Load(s) => Stmt::as_load(s.dst.clone(), f(&s.ptr)),
             StmtInner::Store(s) => Stmt::as_store(f(&s.src), f(&s.ptr)),
+            StmtInner::Cast(s) => Stmt::as_cast(f(&s.src), s.ty.clone(), s.dst.clone()),
             StmtInner::BiOp(s) => {
                 Stmt::as_biop(s.kind.clone(), f(&s.left), f(&s.right), s.dst.clone())
             }
