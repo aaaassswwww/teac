@@ -92,11 +92,26 @@ pub struct IntConst {
     pub val: i64,
 }
 
+
+
 impl Display for IntConst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.val)
     }
 }
+
+#[derive(Clone)]
+pub struct FloatConst {
+    pub dtype: Dtype,
+    pub val: f64,
+}
+
+impl Display for FloatConst {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.val)
+    }
+}
+
 
 /// Instruction operand.
 ///
@@ -107,6 +122,7 @@ impl Display for IntConst {
 #[derive(Clone)]
 pub enum Operand {
     Const(IntConst),
+    FloatConst(FloatConst),
     Local(Local),
     Global(GlobalRef),
 }
@@ -116,6 +132,7 @@ impl Operand {
     pub fn dtype(&self) -> &Dtype {
         match self {
             Operand::Const(c) => &c.dtype,
+            Operand::FloatConst(c) => &c.dtype,
             Operand::Local(l) => &l.dtype,
             Operand::Global(g) => &g.dtype,
         }
@@ -143,6 +160,7 @@ impl Display for Operand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Operand::Const(c) => Display::fmt(c, f),
+            Operand::FloatConst(c) => Display::fmt(c, f),
             Operand::Local(l) => Display::fmt(l, f),
             Operand::Global(g) => Display::fmt(g, f),
         }
@@ -172,6 +190,15 @@ impl From<i32> for Operand {
         Operand::Const(IntConst {
             dtype: Dtype::I32,
             val: i64::from(v),
+        })
+    }
+}
+
+impl From<f32> for Operand {
+    fn from(v: f32) -> Self {
+        Operand::FloatConst(FloatConst {
+            dtype: Dtype::F32,
+            val: f64::from(v),
         })
     }
 }

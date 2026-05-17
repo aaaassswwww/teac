@@ -1,3 +1,5 @@
+use anyhow::Ok;
+
 use super::inst::Inst;
 use super::types::{dtype_to_regsize, Addr, BinOp, Cond, IndexOperand, Operand, RegSize, Register};
 use crate::asm::common::{align_up, StackFrame, StackSlot, StructLayouts};
@@ -465,6 +467,7 @@ impl<'a> FunctionGenerator<'a> {
     fn lower_int(&self, val: &ir::Operand) -> Result<Operand, Error> {
         match val {
             ir::Operand::Const(c) => Ok(Operand::Immediate(c.val)),
+            ir::Operand::FloatConst(f) => Ok(Operand::Immediate(f.val)),
             ir::Operand::Local(l) => {
                 if !matches!(l.dtype, ir::Dtype::I1 | ir::Dtype::I32) {
                     return Err(Error::UnsupportedDtype {
