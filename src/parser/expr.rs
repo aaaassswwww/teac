@@ -1,5 +1,4 @@
 use crate::ast;
-use crate::ast::expr::{CastExpr, CastExprInner, CastOpExpr};
 use crate::parser::common::parse_float;
 
 use super::common::{get_pos, grammar_error, parse_num, Pair, ParseResult, Rule};
@@ -262,7 +261,7 @@ impl<'a> ParseContext<'a> {
         let first_unit = self.parse_cast_expr(inner_pairs[0].clone())?;
         let mut expr = Box::new(ast::ArithExpr {
             pos: first_unit.pos,
-            inner: ast::ArithExprInner::CastExpr(first_unit),
+            inner: ast::ArithExprInner::ExprUnit(first_unit),
         });
 
         let mut i = 1;
@@ -272,7 +271,7 @@ impl<'a> ParseContext<'a> {
                 let right_unit = self.parse_cast_expr(inner_pairs[i + 1].clone())?;
                 let right = Box::new(ast::ArithExpr {
                     pos: right_unit.pos,
-                    inner: ast::ArithExprInner::CastExpr(right_unit),
+                    inner: ast::ArithExprInner::ExprUnit(right_unit),
                 });
 
                 expr = Box::new(ast::ArithExpr {
@@ -316,7 +315,7 @@ impl<'a> ParseContext<'a> {
         Err(grammar_error("arith_mul_op", &pair_for_error))
     }
 
-    fn parse_cast_expr(&self, pair: Pair) -> ParseResult<Box<CastExpr>> {
+    fn parse_cast_expr(&self, pair: Pair) -> ParseResult<Box<ast::ExprUnit>> {
         let pair_for_error = pair.clone();
         let pos = get_pos(&pair);
         let inner_pairs: Vec<_> = pair.into_inner().collect();
@@ -338,21 +337,17 @@ impl<'a> ParseContext<'a> {
         match inner_pairs.len() {
             1 => {
                 // 只有 expr_unit，无转换
-                Ok(Box::new(CastExpr {
-                    pos,
-                    inner: CastExprInner::ExprUnit(expr),
-                }))
+                Ok(expr)
             }
             2 => {
                 // 结构为: [expr_unit, as_keyword, type_spec]
                 if inner_pairs[1].as_rule() == Rule::type_spec {  // 根据实际规则名调整
-                    let type_specifier = self.parse_type_spec(inner_pairs[1].clone())?;
-                    Ok(Box::new(CastExpr {
+                    let target = self
+                        .parse_type_spec(inner_pairs[1].clone())?
+                        .ok_or_else(|| grammar_error("cast_expr: missing target type", &pair_for_error))?;
+                    Ok(Box::new(ast::ExprUnit {
                         pos,
-                        inner: CastExprInner::CastOpExpr(Box::new(CastOpExpr {
-                            expr,
-                            type_specifier,
-                        })),
+                        inner: ast::ExprUnitInner::Cast(Box::new(ast::CastExpr { expr, target })),
                     }))
                 } else {
                     Err(grammar_error("cast_expr: expected 'as'", &pair_for_error))

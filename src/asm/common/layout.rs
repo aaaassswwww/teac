@@ -2,6 +2,10 @@ use crate::asm::error::Error;
 use crate::ir;
 use std::collections::HashMap;
 
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
 #[derive(Debug, Clone)]
 pub struct StructLayout {
     pub size: i64,
@@ -18,6 +22,9 @@ impl StructLayouts {
     ) -> Result<Self, Error> {
         let mut layouts = Self::default();
         for (name, st) in structs.iter() {
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] layout::struct {} fields={}", name, st.elements.len());
+            }
             let layout = layouts.compute_single_layout(st)?;
             layouts.insert(name.clone(), layout);
         }
@@ -84,6 +91,9 @@ impl StructLayouts {
         let mut max_align = 1i64;
 
         for (i, (_, member)) in st.elements.iter().enumerate() {
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] layout::field {} dtype={}", i, member.dtype);
+            }
             let (size, align) = self.size_align_of_member(&member.dtype)?;
 
             offset = align_up(offset, align);

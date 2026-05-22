@@ -19,19 +19,30 @@ pub trait DisplayAsTree {
 
 fn tree_indent(indent_levels: &[bool], is_last: bool) -> String {
     let mut s = String::new();
-    for &last in indent_levels.iter() {
+    for &last in indent_levels {
         if last {
             s.push_str("   ");
         } else {
-            s.push_str("│  ");
+            s.push_str("|  ");
         }
     }
     if is_last {
-        s.push_str("└─");
+        s.push_str("`--");
     } else {
-        s.push_str("├─");
+        s.push_str("|--");
     }
     s
+}
+
+impl<T: DisplayAsTree + ?Sized> DisplayAsTree for Box<T> {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        (**self).fmt_tree(f, indent_levels, is_last)
+    }
 }
 
 impl DisplayAsTree for Program {
@@ -42,11 +53,10 @@ impl DisplayAsTree for Program {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}Program", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(!is_last);
-        let last_index = self.elements.len().saturating_sub(1);
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         for (i, elem) in self.elements.iter().enumerate() {
-            elem.fmt_tree(f, &new_indent, i == last_index)?;
+            elem.fmt_tree(f, &next, i + 1 == self.elements.len())?;
         }
         Ok(())
     }
@@ -76,7 +86,9 @@ impl DisplayAsTree for VarDeclStmt {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}VarDeclStmt", tree_indent(indent_levels, is_last))?;
-        self.inner.fmt_tree(f, indent_levels, true)
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.inner.fmt_tree(f, &next, true)
     }
 }
 
@@ -101,63 +113,54 @@ impl DisplayAsTree for VarDecl {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        let type_str = self
+        let ty = self
             .type_specifier
             .as_ref()
             .map_or("unknown".to_string(), |ts| ts.to_string());
-        writeln!(
-            f,
-            "{}{}: {}",
-            tree_indent(indent_levels, is_last),
-            self.identifier,
-            type_str
-        )
+        writeln!(f, "{}{}: {}", tree_indent(indent_levels, is_last), self.identifier, ty)
     }
 }
 
-impl<T: DisplayAsTree + ?Sized> DisplayAsTree for Box<T> {
+impl DisplayAsTree for VarDef {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        (**self).fmt_tree(f, indent_levels, is_last)
-    }
-}
-
-impl<T: DisplayAsTree + ?Sized> DisplayAsTree for Option<Box<T>> {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        if let Some(v) = self {
-            v.fmt_tree(f, indent_levels, is_last)
-        } else {
-            Ok(())
+        writeln!(f, "{}VarDef {}", tree_indent(indent_levels, is_last), self.identifier)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        match &self.inner {
+            VarDefInner::Scalar(s) => s.val.fmt_tree(f, &next, true),
+            VarDefInner::Array(a) => match &a.initializer {
+                ArrayInitializer::ExplicitList(vals) => {
+                    for (i, v) in vals.iter().enumerate() {
+                        v.fmt_tree(f, &next, i + 1 == vals.len())?;
+                    }
+                    Ok(())
+                }
+                ArrayInitializer::Fill { val, count } => {
+                    writeln!(f, "{}fill x{}", tree_indent(&next, false), count)?;
+                    val.fmt_tree(f, &next, true)
+                }
+            },
         }
     }
 }
-impl DisplayAsTree for FnDecl {
+
+impl DisplayAsTree for Vec<VarDecl> {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}FnDecl {}",
-            tree_indent(indent_levels, is_last),
-            self.identifier
-        )?;
-        if let Some(params) = &self.param_decl {
-            let mut new_indent = indent_levels.to_vec();
-            new_indent.push(!is_last);
-            writeln!(f, "{}Params:", tree_indent(&new_indent, false))?;
-            params.decls.fmt_tree(f, &new_indent, true)?;
+        writeln!(f, "{}VarDeclList", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        for (i, decl) in self.iter().enumerate() {
+            decl.fmt_tree(f, &next, i + 1 == self.len())?;
         }
         Ok(())
     }
@@ -174,6 +177,28 @@ impl DisplayAsTree for FnDeclStmt {
     }
 }
 
+impl DisplayAsTree for FnDecl {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}FnDecl {}", tree_indent(indent_levels, is_last), self.identifier)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        if let Some(params) = &self.param_decl {
+            for (i, decl) in params.decls.iter().enumerate() {
+                decl.fmt_tree(f, &next, i + 1 == params.decls.len() && self.return_dtype.is_none())?;
+            }
+        }
+        if let Some(ret) = &self.return_dtype {
+            writeln!(f, "{}return: {}", tree_indent(&next, true), ret)?;
+        }
+        Ok(())
+    }
+}
+
 impl DisplayAsTree for FnDef {
     fn fmt_tree(
         &self,
@@ -181,99 +206,39 @@ impl DisplayAsTree for FnDef {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}FnDef {}",
-            tree_indent(indent_levels, is_last),
-            self.fn_decl.identifier
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(!is_last);
-        self.stmts.fmt_tree(f, &new_indent, true)
-    }
-}
-
-impl DisplayAsTree for VarDef {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        let prefix = tree_indent(indent_levels, is_last);
-        match &self.inner {
-            VarDefInner::Scalar(s) => writeln!(f, "{}{} = {}", prefix, self.identifier, s.val),
-            VarDefInner::Array(a) => match &a.initializer {
-                ArrayInitializer::ExplicitList(vals) => {
-                    writeln!(f, "{}{} = {:?}", prefix, self.identifier, vals)
-                }
-                ArrayInitializer::Fill { val, count } => {
-                    writeln!(f, "{}{} = [{}; {}]", prefix, self.identifier, val, count)
-                }
-            },
-        }
-    }
-}
-
-impl DisplayAsTree for VarDeclList {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        writeln!(f, "{}VarDeclList", tree_indent(indent_levels, is_last))?;
-
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
-        let last_index = self.len().saturating_sub(1);
-        for (i, decl) in self.iter().enumerate() {
-            decl.fmt_tree(f, &new_indent, i == last_index)?;
+        writeln!(f, "{}FnDef {}", tree_indent(indent_levels, is_last), self.fn_decl.identifier)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.fn_decl.fmt_tree(f, &next, self.stmts.is_empty())?;
+        for (i, stmt) in self.stmts.iter().enumerate() {
+            stmt.fmt_tree(f, &next, i + 1 == self.stmts.len())?;
         }
         Ok(())
     }
 }
 
-impl DisplayAsTree for AssignmentStmt {
+impl DisplayAsTree for StructDef {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(f, "{}AssignmentStmt", tree_indent(indent_levels, is_last))?;
-
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
-        self.left_val.fmt_tree(f, &new_indent, false)?;
-        self.right_val.fmt_tree(f, &new_indent, true)
+        writeln!(f, "{}StructDef {}", tree_indent(indent_levels, is_last), self.identifier)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.decls.fmt_tree(f, &next, true)
     }
 }
 
-impl DisplayAsTree for CallStmt {
+impl DisplayAsTree for CodeBlockStmt {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}CallStmt {}",
-            tree_indent(indent_levels, is_last),
-            self.fn_call.name
-        )?;
-
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
-        let last_index = self.fn_call.vals.len().saturating_sub(1);
-        for (i, val) in self.fn_call.vals.iter().enumerate() {
-            val.fmt_tree(f, &new_indent, i == last_index)?;
-        }
-        Ok(())
+        self.inner.fmt_tree(f, indent_levels, is_last)
     }
 }
 
@@ -298,27 +263,33 @@ impl DisplayAsTree for CodeBlockStmtInner {
     }
 }
 
-impl DisplayAsTree for CodeBlockStmt {
+impl DisplayAsTree for AssignmentStmt {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        self.inner.fmt_tree(f, indent_levels, is_last)
+        writeln!(f, "{}AssignmentStmt", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.left_val.fmt_tree(f, &next, false)?;
+        self.right_val.fmt_tree(f, &next, true)
     }
 }
 
-impl DisplayAsTree for CodeBlockStmtList {
+impl DisplayAsTree for CallStmt {
     fn fmt_tree(
         &self,
         f: &mut Formatter<'_>,
         indent_levels: &[bool],
-        _is_last: bool,
+        is_last: bool,
     ) -> Result<(), Error> {
-        let last_index = self.len().saturating_sub(1);
-        for (i, stmt) in self.iter().enumerate() {
-            stmt.fmt_tree(f, indent_levels, i == last_index)?;
+        writeln!(f, "{}CallStmt {}", tree_indent(indent_levels, is_last), self.fn_call.qualified_name())?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        for (i, val) in self.fn_call.vals.iter().enumerate() {
+            val.fmt_tree(f, &next, i + 1 == self.fn_call.vals.len())?;
         }
         Ok(())
     }
@@ -331,19 +302,17 @@ impl DisplayAsTree for IfStmt {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}IfStmt Cond: {}",
-            tree_indent(indent_levels, is_last),
-            self.bool_unit
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        writeln!(f, "{}IfBranch:", tree_indent(&new_indent, false))?;
-        self.if_stmts.fmt_tree(f, &new_indent, true)?;
-        if let Some(e) = &self.else_stmts {
-            writeln!(f, "{}ElseBranch:", tree_indent(&new_indent, false))?;
-            e.fmt_tree(f, &new_indent, true)?;
+        writeln!(f, "{}IfStmt", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.bool_unit.fmt_tree(f, &next, false)?;
+        for stmt in &self.if_stmts {
+            stmt.fmt_tree(f, &next, false)?;
+        }
+        if let Some(else_stmts) = &self.else_stmts {
+            for (i, stmt) in else_stmts.iter().enumerate() {
+                stmt.fmt_tree(f, &next, i + 1 == else_stmts.len())?;
+            }
         }
         Ok(())
     }
@@ -356,16 +325,14 @@ impl DisplayAsTree for WhileStmt {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}WhileStmt Cond: {}",
-            tree_indent(indent_levels, is_last),
-            self.bool_unit
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        writeln!(f, "{}Body:", tree_indent(&new_indent, false))?;
-        self.stmts.fmt_tree(f, &new_indent, true)
+        writeln!(f, "{}WhileStmt", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.bool_unit.fmt_tree(f, &next, false)?;
+        for (i, stmt) in self.stmts.iter().enumerate() {
+            stmt.fmt_tree(f, &next, i + 1 == self.stmts.len())?;
+        }
+        Ok(())
     }
 }
 
@@ -376,11 +343,13 @@ impl DisplayAsTree for ReturnStmt {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
+        writeln!(f, "{}ReturnStmt", tree_indent(indent_levels, is_last))?;
         if let Some(v) = &self.val {
-            writeln!(f, "{}ReturnStmt {}", tree_indent(indent_levels, is_last), v)
-        } else {
-            writeln!(f, "{}ReturnStmt", tree_indent(indent_levels, is_last))
+            let mut next = indent_levels.to_vec();
+            next.push(is_last);
+            v.fmt_tree(f, &next, true)?;
         }
+        Ok(())
     }
 }
 
@@ -416,6 +385,7 @@ impl DisplayAsTree for NullStmt {
         writeln!(f, "{}NullStmt", tree_indent(indent_levels, is_last))
     }
 }
+
 impl DisplayAsTree for LeftVal {
     fn fmt_tree(
         &self,
@@ -424,13 +394,12 @@ impl DisplayAsTree for LeftVal {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}LeftVal", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         match &self.inner {
-            LeftValInner::Id(id) => writeln!(f, "{}Id {}", tree_indent(&new_indent, true), id),
-            LeftValInner::ArrayExpr(ae) => ae.fmt_tree(f, &new_indent, true),
-            LeftValInner::MemberExpr(me) => me.fmt_tree(f, &new_indent, true),
+            LeftValInner::Id(id) => writeln!(f, "{}Id({})", tree_indent(&next, true), id),
+            LeftValInner::ArrayExpr(expr) => expr.fmt_tree(f, &next, true),
+            LeftValInner::MemberExpr(expr) => expr.fmt_tree(f, &next, true),
         }
     }
 }
@@ -443,32 +412,12 @@ impl DisplayAsTree for RightVal {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}RightVal", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         match &self.inner {
-            RightValInner::ArithExpr(ae) => ae.fmt_tree(f, &new_indent, true),
-            RightValInner::BoolExpr(be) => be.fmt_tree(f, &new_indent, true),
+            RightValInner::ArithExpr(expr) => expr.fmt_tree(f, &next, true),
+            RightValInner::BoolExpr(expr) => expr.fmt_tree(f, &next, true),
         }
-    }
-}
-
-impl DisplayAsTree for StructDef {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}StructDef {}",
-            tree_indent(indent_levels, is_last),
-            self.identifier
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        self.decls.fmt_tree(f, &new_indent, true)
     }
 }
 
@@ -480,10 +429,10 @@ impl DisplayAsTree for ArrayExpr {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}ArrayExpr", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        self.arr.fmt_tree(f, &new_indent, false)?;
-        self.idx.fmt_tree(f, &new_indent, true)
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.arr.fmt_tree(f, &next, false)?;
+        self.idx.fmt_tree(f, &next, true)
     }
 }
 
@@ -494,15 +443,24 @@ impl DisplayAsTree for MemberExpr {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}MemberExpr {}",
-            tree_indent(indent_levels, is_last),
-            self.member_id
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        self.struct_id.fmt_tree(f, &new_indent, true)
+        writeln!(f, "{}MemberExpr {}", tree_indent(indent_levels, is_last), self.member_id)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.struct_id.fmt_tree(f, &next, true)
+    }
+}
+
+impl DisplayAsTree for IndexExpr {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        match &self.inner {
+            IndexExprInner::Num(n) => writeln!(f, "{}IndexExpr Num({})", tree_indent(indent_levels, is_last), n),
+            IndexExprInner::Id(id) => writeln!(f, "{}IndexExpr Id({})", tree_indent(indent_levels, is_last), id),
+        }
     }
 }
 
@@ -514,11 +472,65 @@ impl DisplayAsTree for ArithExpr {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}ArithExpr", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         match &self.inner {
-            ArithExprInner::ArithBiOpExpr(expr) => expr.fmt_tree(f, &new_indent, true),
-            ArithExprInner::CastExpr(unit) => unit.fmt_tree(f, &new_indent, true),
+            ArithExprInner::ArithBiOpExpr(expr) => expr.fmt_tree(f, &next, true),
+            ArithExprInner::ExprUnit(unit) => unit.fmt_tree(f, &next, true),
+        }
+    }
+}
+
+impl DisplayAsTree for ArithBiOpExpr {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}ArithBiOpExpr {:?}", tree_indent(indent_levels, is_last), self.op)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.left.fmt_tree(f, &next, false)?;
+        self.right.fmt_tree(f, &next, true)
+    }
+}
+
+impl DisplayAsTree for CastExpr {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}CastExpr", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.expr.fmt_tree(f, &next, false)?;
+        writeln!(f, "{}target: {}", tree_indent(&next, true), self.target)
+    }
+}
+
+impl DisplayAsTree for ExprUnit {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}ExprUnit", tree_indent(indent_levels, is_last))?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        match &self.inner {
+            ExprUnitInner::Num(n) => writeln!(f, "{}Num({})", tree_indent(&next, true), n),
+            ExprUnitInner::Float(v) => writeln!(f, "{}Float({})", tree_indent(&next, true), v),
+            ExprUnitInner::Id(id) => writeln!(f, "{}Id({})", tree_indent(&next, true), id),
+            ExprUnitInner::ArithExpr(expr) => expr.fmt_tree(f, &next, true),
+            ExprUnitInner::Cast(expr) => expr.fmt_tree(f, &next, true),
+            ExprUnitInner::FnCall(call) => call.fmt_tree(f, &next, true),
+            ExprUnitInner::ArrayExpr(expr) => expr.fmt_tree(f, &next, true),
+            ExprUnitInner::MemberExpr(expr) => expr.fmt_tree(f, &next, true),
+            ExprUnitInner::Reference(id) => writeln!(f, "{}Ref({})", tree_indent(&next, true), id),
         }
     }
 }
@@ -531,127 +543,11 @@ impl DisplayAsTree for BoolExpr {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}BoolExpr", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         match &self.inner {
-            BoolExprInner::BoolBiOpExpr(expr) => expr.fmt_tree(f, &new_indent, true),
-            BoolExprInner::BoolUnit(unit) => unit.fmt_tree(f, &new_indent, true),
-        }
-    }
-}
-
-impl DisplayAsTree for IndexExpr {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        match &self.inner {
-            IndexExprInner::Num(n) => writeln!(
-                f,
-                "{}IndexExpr Num({})",
-                tree_indent(indent_levels, is_last),
-                n
-            ),
-            IndexExprInner::Id(s) => writeln!(
-                f,
-                "{}IndexExpr Id({})",
-                tree_indent(indent_levels, is_last),
-                s
-            ),
-        }
-    }
-}
-
-impl DisplayAsTree for ArithBiOpExpr {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}ArithBiOpExpr {:?}",
-            tree_indent(indent_levels, is_last),
-            self.op
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        self.left.fmt_tree(f, &new_indent, false)?;
-        self.right.fmt_tree(f, &new_indent, true)
-    }
-}
-
-impl DisplayAsTree for CastOpExpr {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        writeln!(f, "{}CastOpExpr", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        // 先格式化表达式，再格式化目标类型
-        self.expr.fmt_tree(f, &new_indent, false)?;
-        let type_str = self
-            .type_specifier
-            .as_ref()
-            .map_or("unknown".to_string(), |ts| ts.to_string());
-        writeln!(
-            f,
-            "{}{}type_specifier: {}",
-            tree_indent(&new_indent, true),
-            "  ",
-            type_str
-        )?;
-        Ok(())
-    }
-}
-
-impl DisplayAsTree for CastExpr {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        // 打印当前节点名称
-        writeln!(f, "{}CastExpr", tree_indent(indent_levels, is_last))?;
-        // 构建子节点缩进
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        // 根据 inner 枚举调用对应的子节点格式化
-        match &self.inner {
-            CastExprInner::CastOpExpr(cast_op) => cast_op.fmt_tree(f, &new_indent, true),
-            CastExprInner::ExprUnit(unit) => unit.fmt_tree(f, &new_indent, true),
-        }
-    }
-}
-
-impl DisplayAsTree for ExprUnit {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        writeln!(f, "{}ExprUnit", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        match &self.inner {
-            ExprUnitInner::Num(n) => writeln!(f, "{}Num({})", tree_indent(&new_indent, true), n),
-            ExprUnitInner::Float(fl) => writeln!(f, "{}Float({})", tree_indent(&new_indent, true), fl),
-            ExprUnitInner::Id(id) => writeln!(f, "{}Id({})", tree_indent(&new_indent, true), id),
-            ExprUnitInner::ArithExpr(ae) => ae.fmt_tree(f, &new_indent, true),
-            ExprUnitInner::FnCall(fc) => fc.fmt_tree(f, &new_indent, true),
-            ExprUnitInner::ArrayExpr(ae) => ae.fmt_tree(f, &new_indent, true),
-            ExprUnitInner::MemberExpr(me) => me.fmt_tree(f, &new_indent, true),
-            ExprUnitInner::Reference(id) => {
-                writeln!(f, "{}Ref({})", tree_indent(&new_indent, true), id)
-            }
+            BoolExprInner::BoolBiOpExpr(expr) => expr.fmt_tree(f, &next, true),
+            BoolExprInner::BoolUnit(unit) => unit.fmt_tree(f, &next, true),
         }
     }
 }
@@ -663,16 +559,11 @@ impl DisplayAsTree for BoolBiOpExpr {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}BoolBiOpExpr {:?}",
-            tree_indent(indent_levels, is_last),
-            self.op
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-        self.left.fmt_tree(f, &new_indent, false)?;
-        self.right.fmt_tree(f, &new_indent, true)
+        writeln!(f, "{}BoolBiOpExpr {:?}", tree_indent(indent_levels, is_last), self.op)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.left.fmt_tree(f, &next, false)?;
+        self.right.fmt_tree(f, &next, true)
     }
 }
 
@@ -684,39 +575,13 @@ impl DisplayAsTree for BoolUnit {
         is_last: bool,
     ) -> Result<(), Error> {
         writeln!(f, "{}BoolUnit", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
         match &self.inner {
-            BoolUnitInner::ComExpr(c) => c.fmt_tree(f, &new_indent, true),
-            BoolUnitInner::BoolExpr(b) => b.fmt_tree(f, &new_indent, true),
-            BoolUnitInner::BoolUOpExpr(u) => u.fmt_tree(f, &new_indent, true),
+            BoolUnitInner::ComExpr(expr) => expr.fmt_tree(f, &next, true),
+            BoolUnitInner::BoolExpr(expr) => expr.fmt_tree(f, &next, true),
+            BoolUnitInner::BoolUOpExpr(expr) => expr.fmt_tree(f, &next, true),
         }
-    }
-}
-
-impl DisplayAsTree for FnCall {
-    fn fmt_tree(
-        &self,
-        f: &mut Formatter<'_>,
-        indent_levels: &[bool],
-        is_last: bool,
-    ) -> Result<(), Error> {
-        let fn_name = self.qualified_name();
-        writeln!(
-            f,
-            "{}FnCall: {}",
-            tree_indent(indent_levels, is_last),
-            fn_name
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
-        let last_index = self.vals.len().saturating_sub(1);
-        for (i, val) in self.vals.iter().enumerate() {
-            val.fmt_tree(f, &new_indent, i == last_index)?;
-        }
-
-        Ok(())
     }
 }
 
@@ -727,12 +592,11 @@ impl DisplayAsTree for ComExpr {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(f, "{}ComExpr", tree_indent(indent_levels, is_last))?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
-
-        self.left.fmt_tree(f, &new_indent, false)?;
-        self.right.fmt_tree(f, &new_indent, true)
+        writeln!(f, "{}ComExpr {:?}", tree_indent(indent_levels, is_last), self.op)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.left.fmt_tree(f, &next, false)?;
+        self.right.fmt_tree(f, &next, true)
     }
 }
 
@@ -743,15 +607,26 @@ impl DisplayAsTree for BoolUOpExpr {
         indent_levels: &[bool],
         is_last: bool,
     ) -> Result<(), Error> {
-        writeln!(
-            f,
-            "{}BoolUOpExpr {:?}",
-            tree_indent(indent_levels, is_last),
-            self.op
-        )?;
-        let mut new_indent = indent_levels.to_vec();
-        new_indent.push(is_last);
+        writeln!(f, "{}BoolUOpExpr {:?}", tree_indent(indent_levels, is_last), self.op)?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        self.cond.fmt_tree(f, &next, true)
+    }
+}
 
-        self.cond.fmt_tree(f, &new_indent, true)
+impl DisplayAsTree for FnCall {
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        indent_levels: &[bool],
+        is_last: bool,
+    ) -> Result<(), Error> {
+        writeln!(f, "{}FnCall {}", tree_indent(indent_levels, is_last), self.qualified_name())?;
+        let mut next = indent_levels.to_vec();
+        next.push(is_last);
+        for (i, val) in self.vals.iter().enumerate() {
+            val.fmt_tree(f, &next, i + 1 == self.vals.len())?;
+        }
+        Ok(())
     }
 }

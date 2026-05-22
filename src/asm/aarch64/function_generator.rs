@@ -1,5 +1,3 @@
-use anyhow::Ok;
-
 use super::inst::Inst;
 use super::types::{dtype_to_regsize, Addr, BinOp, Cond, IndexOperand, Operand, RegSize, Register};
 use crate::asm::common::{align_up, StackFrame, StackSlot, StructLayouts};
@@ -467,7 +465,7 @@ impl<'a> FunctionGenerator<'a> {
     fn lower_int(&self, val: &ir::Operand) -> Result<Operand, Error> {
         match val {
             ir::Operand::Const(c) => Ok(Operand::Immediate(c.val)),
-            ir::Operand::FloatConst(f) => Ok(Operand::Immediate(f.val)),
+            ir::Operand::FloatConst(_) => todo!(),
             ir::Operand::Local(l) => {
                 if !matches!(l.dtype, ir::Dtype::I1 | ir::Dtype::I32) {
                     return Err(Error::UnsupportedDtype {
@@ -505,6 +503,7 @@ impl<'a> FunctionGenerator<'a> {
     fn lower_value(&self, val: &ir::Operand) -> Result<(Operand, RegSize), Error> {
         match val {
             ir::Operand::Const(c) => Ok((Operand::Immediate(c.val), RegSize::W32)),
+            ir::Operand::FloatConst(_) => todo!(),
             ir::Operand::Local(l) => {
                 let size = match &l.dtype {
                     ir::Dtype::I1 | ir::Dtype::I32 => RegSize::W32,
@@ -578,12 +577,14 @@ impl<'a> FunctionGenerator<'a> {
             ir::Operand::Const(_) => Err(Error::UnsupportedOperand {
                 what: format!("unsupported pointer operand: {}", val),
             }),
+            ir::Operand::FloatConst(_) => todo!(),
         }
     }
 
     fn lower_index(&self, val: &ir::Operand) -> Result<IndexOperand, Error> {
         match val {
             ir::Operand::Const(c) => Ok(IndexOperand::Imm(c.val)),
+            ir::Operand::FloatConst(_) => todo!(),
             ir::Operand::Local(l) => {
                 if !matches!(l.dtype, ir::Dtype::I1 | ir::Dtype::I32) {
                     return Err(Error::UnsupportedDtype {
@@ -645,6 +646,7 @@ impl<'a> FunctionGenerator<'a> {
 
         let src_op = match src {
             ir::Operand::Const(c) => Operand::Immediate(c.val),
+            ir::Operand::FloatConst(_) => todo!(),
             ir::Operand::Local(l) => Operand::Register(Register::Virtual(l.id.0)),
             ir::Operand::Global(_) => {
                 return Err(Error::UnsupportedOperand {

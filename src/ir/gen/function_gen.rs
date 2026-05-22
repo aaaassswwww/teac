@@ -6,6 +6,7 @@
 //! continue), arithmetic and boolean expressions, array and struct member
 //! access, and function calls.
 
+
 use crate::ast::{self, ArrayInitializer, AssignmentStmt, RightValList};
 use crate::ir::function::{BlockLabel, FunctionGenerator};
 use crate::ir::gen::conversions::{compose_var_decl_dtype, compose_var_def_dtype};
@@ -13,6 +14,24 @@ use crate::ir::stmt::{ArithBinOp, CmpPredicate, StmtInner};
 use crate::ir::types::Dtype;
 use crate::ir::value::{Local, Operand};
 use crate::ir::Error;
+
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
+fn debug_stmt_kind(stmt: &ast::CodeBlockStmt) -> &'static str {
+    match &stmt.inner {
+        ast::CodeBlockStmtInner::Assignment(_) => "Assignment",
+        ast::CodeBlockStmtInner::VarDecl(_) => "VarDecl",
+        ast::CodeBlockStmtInner::Call(_) => "Call",
+        ast::CodeBlockStmtInner::If(_) => "If",
+        ast::CodeBlockStmtInner::While(_) => "While",
+        ast::CodeBlockStmtInner::Return(_) => "Return",
+        ast::CodeBlockStmtInner::Continue(_) => "Continue",
+        ast::CodeBlockStmtInner::Break(_) => "Break",
+        ast::CodeBlockStmtInner::Null(_) => "Null",
+    }
+}
 
 /// Builds an i32-typed [`Operand`] for a GEP index.
 ///
@@ -56,6 +75,7 @@ impl FunctionGenerator<'_> {
 
         let arguments = function_type.arguments.clone();
         let return_dtype = function_type.return_dtype.clone();
+        self.return_dtype = Some(return_dtype.clone());
         // The entry label is the function's link name so that the IR's
         // entry-block label matches the `@symbol` emitted by the printer.
         let entry_label = self.resolve_link_name(identifier);
@@ -80,8 +100,18 @@ impl FunctionGenerator<'_> {
         }
 
         // Lower the function body statement by statement.
-        for stmt in &from.stmts {
+        for (idx, stmt) in from.stmts.iter().enumerate() {
+            if debug_longcode_enabled() {
+                eprintln!(
+                    "[dbg] irgen::stmt {} enter kind={}",
+                    idx,
+                    debug_stmt_kind(stmt)
+                );
+            }
             self.handle_block(stmt, None, None)?;
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] irgen::stmt {} done", idx);
+            }
         }
 
         // Append an implicit return if the last instruction is not already a
@@ -92,6 +122,7 @@ impl FunctionGenerator<'_> {
             if !matches!(stmt.inner, StmtInner::Return(_)) {
                 match &return_dtype {
                     Dtype::I32 => self.emit_return(Some(Operand::from(0))),
+                    Dtype::F32 => self.emit_return(Some(Operand::from(0.0))),
                     Dtype::Void => self.emit_return(None),
                     other => unreachable!(
                         "function {} has return type {other} which \
@@ -102,6 +133,7 @@ impl FunctionGenerator<'_> {
             }
         }
 
+        self.return_dtype = None;
         Ok(())
     }
 }
@@ -144,9 +176,18 @@ impl FunctionGenerator<'_> {
     /// `handle_right_val` yields the value to store, so the assignment is a
     /// single `store` instruction.
     pub fn handle_assignment_stmt(&mut self, stmt: &AssignmentStmt) -> Result<(), Error> {
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] irgen::assignment lhs={} rhs={}", stmt.left_val, stmt.right_val);
+        }
         let left = self.handle_left_val(&stmt.left_val)?;
         let right = self.handle_right_val(&stmt.right_val)?;
-        self.emit_store(right, left);
+
+        let targeted_dtype = match left.dtype() {
+            Dtype::Pointer { pointee } => pointee.as_ref().clone(),
+            other => other.clone(),
+        };
+        let value = self.coerce_to(right, &targeted_dtype);
+        self.emit_store(value, left);
         Ok(())
     }
 
@@ -290,7 +331,8 @@ impl FunctionGenerator<'_> {
         let variable: Local = match &def.inner {
             ast::VarDefInner::Scalar(scalar) => {
                 let right_val = self.handle_right_val(&scalar.val)?;
-                self.define_scalar_local(pointee, right_val)
+                let coerced = self.coerce_to(right_val, &pointee);
+                self.define_scalar_local(pointee, coerced)
             }
             ast::VarDefInner::Array(array) => {
                 let local = self.allocate_pointer_local(pointee);
@@ -325,6 +367,7 @@ impl FunctionGenerator<'_> {
                 let retval = match &function_type.return_dtype {
                     Dtype::Void => None,
                     Dtype::I32 => Some(Operand::from(self.fresh_local(Dtype::I32))),
+                    Dtype::F32 => Some(Operand::from(self.fresh_local(Dtype::F32))),
                     other => unreachable!(
                         "registered function {function_name} has return type {other} \
                          which FunctionType::try_from should have rejected"
@@ -432,6 +475,8 @@ impl FunctionGenerator<'_> {
             }
             Some(val) => {
                 let val = self.handle_right_val(val)?;
+                let target = self.return_dtype.clone().expect("current function return type not initialized");
+                let val = self.coerce_to(val, &target);
                 self.emit_return(Some(val));
             }
         }
@@ -462,6 +507,62 @@ impl FunctionGenerator<'_> {
 // -----------------------------------------------------------------------
 
 impl FunctionGenerator<'_> {
+    /// Promotes an integer-like operand to `f32`.
+    ///
+    /// `f32` operands are returned unchanged. `i32` and `i1` operands are
+    /// converted through a fresh `sitofp` temporary.
+    fn coerce_to_f32(&mut self, operand: Operand) -> Operand {
+        match operand.dtype() {
+            Dtype::F32 => operand,
+            Dtype::I32 | Dtype::I1 => {
+                let dst = Operand::from(self.fresh_local(Dtype::F32));
+                self.emit_sitofp(operand, dst.clone());
+                dst
+            }
+            _ => operand,
+        }
+    }
+
+    /// Truncates a floating-point operand to `i32`.
+    ///
+    /// `i32` operands are returned unchanged. `f32` operands are converted
+    /// through a fresh `fptosi` temporary. `i1` is widened to `i32` via
+    /// `sitofp` + `fptosi` so callers can treat integer-like values uniformly.
+    fn coerce_to_i32(&mut self, operand: Operand) -> Operand {
+        match operand.dtype() {
+            Dtype::I32 => operand,
+            Dtype::F32 => {
+                let dst = Operand::from(self.fresh_local(Dtype::I32));
+                self.emit_fptosi(operand, dst.clone());
+                dst
+            }
+            Dtype::I1 => {
+                let as_f32 = self.coerce_to_f32(operand);
+                let dst = Operand::from(self.fresh_local(Dtype::I32));
+                self.emit_fptosi(as_f32, dst.clone());
+                dst
+            }
+            _ => operand,
+        }
+    }
+
+    /// Coerces `operand` to the requested scalar target type when needed.
+    ///
+    /// Supported implicit conversions are limited to the numeric cases used by
+    /// the front-end: integer-like (`i32`/`i1`) to `f32`, and `f32` to `i32`.
+    /// If the operand already has the target type, it is returned unchanged.
+    fn coerce_to(&mut self, operand: Operand, target: &Dtype) -> Operand {
+        if operand.dtype() == target {
+            return operand;
+        }
+
+        match target {
+            Dtype::F32 => self.coerce_to_f32(operand),
+            Dtype::I32 => self.coerce_to_i32(operand),
+            _ => operand,
+        }
+    }
+
     /// Lowers a comparison expression into a conditional branch.
     ///
     /// Emits a `cmp` instruction (result type `i1`) followed by a conditional
@@ -476,12 +577,26 @@ impl FunctionGenerator<'_> {
         let right = self.handle_expr_unit(&expr.right)?;
 
         let dst = Operand::from(self.fresh_local(Dtype::I1));
-        self.emit_cmp(
-            CmpPredicate::from(&expr.op),
-            left,
-            right,
-            dst.clone(),
-        );
+        match (left.dtype(), right.dtype()) {
+            (Dtype::F32, _) | (_, Dtype::F32) => {
+                let left = self.coerce_to_f32(left);
+                let right = self.coerce_to_f32(right);
+                self.emit_fcmp(CmpPredicate::from(&expr.op), left, right, dst.clone());
+            }
+            (Dtype::I32, Dtype::I32) | (Dtype::I1, Dtype::I1) | (Dtype::I32, Dtype::I1) | (Dtype::I1, Dtype::I32)=> {
+                let left = self.coerce_to_i32(left);
+                let right = self.coerce_to_i32(right);
+                self.emit_cmp(CmpPredicate::from(&expr.op), left, right, dst.clone());
+            }
+            _ => {
+                return Err(Error::TypeMismatch { 
+                    symbol: "<cmp_expr>".to_string(), 
+                    expected: left.dtype().clone(), 
+                    actual: right.dtype().clone() 
+                })
+            }
+        }
+
         self.emit_cjump(dst, true_label, false_label);
 
         Ok(())
@@ -509,6 +624,7 @@ impl FunctionGenerator<'_> {
                 Ok(op)
             }
             ast::ExprUnitInner::ArithExpr(expr) => self.handle_arith_expr(expr),
+            ast::ExprUnitInner::Cast(expr) => self.handle_cast_expr(expr),
             ast::ExprUnitInner::FnCall(fn_call) => {
                 let name = fn_call.qualified_name();
                 let return_dtype = &self
@@ -525,6 +641,7 @@ impl FunctionGenerator<'_> {
                 // an expression is a source-level mistake.
                 let res = match return_dtype {
                     Dtype::I32 => Operand::from(self.fresh_local(Dtype::I32)),
+                    Dtype::F32 => Operand::from(self.fresh_local(Dtype::F32)),
                     Dtype::Void => {
                         return Err(Error::InvalidExprUnit {
                             expr_unit: unit.clone(),
@@ -604,17 +721,111 @@ impl FunctionGenerator<'_> {
     }
 
     fn handle_cast_expr(&mut self, expr: &ast::expr::CastExpr) -> Result<Operand, Error> {
-        match &expr.inner {
-            ast::expr::CastExprInner::CastOpExpr(expr) => self.handle_cast_op_expr(expr),
-            ast::expr::CastExprInner::ExprUnit(unit) => self.handle_expr_unit(unit),
+        let src = self.handle_expr_unit(&expr.expr)?;
+        let source_dtype = src.dtype().clone();
+        let target_dtype = Dtype::from(&expr.target);
+
+        if source_dtype == target_dtype {
+            return Ok(src);
+        }
+
+        let dst = Operand::from(self.fresh_local(target_dtype.clone()));
+        match (&source_dtype, &target_dtype) {
+            (Dtype::I32, Dtype::F32) => {
+                self.emit_sitofp(src, dst.clone());
+                Ok(dst)
+            }
+            (Dtype::F32, Dtype::I32) => {
+                self.emit_fptosi(src, dst.clone());
+                Ok(dst)
+            }
+            _ => Err(Error::InvalidCast),
         }
     }
 
     /// Lowers an arithmetic expression (binary operation or a single unit).
     fn handle_arith_expr(&mut self, expr: &ast::ArithExpr) -> Result<Operand, Error> {
-        match &expr.inner {
-            ast::ArithExprInner::ArithBiOpExpr(expr) => self.handle_arith_biop_expr(expr),
-            ast::ArithExprInner::CastExpr(cast) => self.handle_cast_expr(cast),
+        self.handle_arith_expr_with_depth(expr, 0)
+    }
+
+    fn handle_arith_expr_with_depth(
+        &mut self,
+        expr: &ast::ArithExpr,
+        depth: usize,
+    ) -> Result<Operand, Error> {
+        let mut nodes = vec![(expr, depth, false)];
+        let mut values = Vec::new();
+
+        while let Some((expr, depth, visited)) = nodes.pop() {
+            if debug_longcode_enabled() && depth > 0 && depth % 200 == 0 && !visited {
+                eprintln!("[dbg] irgen::arith depth={depth}");
+            }
+
+            match (&expr.inner, visited) {
+                (ast::ArithExprInner::ExprUnit(unit), _) => {
+                    values.push(self.handle_expr_unit(unit)?);
+                }
+                (ast::ArithExprInner::ArithBiOpExpr(biop), false) => {
+                    nodes.push((expr, depth, true));
+                    nodes.push((biop.right.as_ref(), depth + 1, false));
+                    nodes.push((biop.left.as_ref(), depth + 1, false));
+                }
+                (ast::ArithExprInner::ArithBiOpExpr(biop), true) => {
+                    let right = values.pop().expect("missing rhs operand for arithmetic expression");
+                    let left = values.pop().expect("missing lhs operand for arithmetic expression");
+                    let value = self.lower_arith_operands(&biop.op, left, right)?;
+                    values.push(value);
+                }
+            }
+        }
+
+        Ok(values
+            .pop()
+            .expect("arithmetic expression traversal produced no value"))
+    }
+
+    fn handle_arith_biop_expr_with_depth(
+        &mut self,
+        expr: &ast::ArithBiOpExpr,
+        depth: usize,
+    ) -> Result<Operand, Error> {
+        let left = self.handle_arith_expr_with_depth(&expr.left, depth)?;
+        let right = self.handle_arith_expr_with_depth(&expr.right, depth)?;
+
+        self.lower_arith_operands(&expr.op, left, right)
+    }
+
+    fn lower_arith_operands(
+        &mut self,
+        op: &ast::ArithBiOp,
+        left: Operand,
+        right: Operand,
+    ) -> Result<Operand, Error> {
+        let kind = ArithBinOp::from(op);
+
+        match (left.dtype(), right.dtype()) {
+            (Dtype::F32, _) | (_, Dtype::F32) => {
+                let left = self.coerce_to_f32(left);
+                let right = self.coerce_to_f32(right);
+                let dst = Operand::from(self.fresh_local(Dtype::F32));
+                self.emit_fbiop(kind, left, right, dst.clone());
+                Ok(dst)
+            }
+            (Dtype::I32, Dtype::I32)
+            | (Dtype::I1, Dtype::I32)
+            | (Dtype::I32, Dtype::I1)
+            | (Dtype::I1, Dtype::I1) => {
+                let left = self.coerce_to_i32(left);
+                let right = self.coerce_to_i32(right);
+                let dst = Operand::from(self.fresh_local(Dtype::I32));
+                self.emit_biop(kind, left, right, dst.clone());
+                Ok(dst)
+            }
+            _ => Err(Error::TypeMismatch {
+                symbol: "<arith-expr>".to_string(),
+                expected: left.dtype().clone(),
+                actual: right.dtype().clone(),
+            }),
         }
     }
 
@@ -631,6 +842,9 @@ impl FunctionGenerator<'_> {
     /// Loads the base pointer if it is itself pointer-typed (e.g., a parameter
     /// passed as a pointer-to-pointer), then computes the element address via GEP.
     fn handle_array_expr(&mut self, expr: &ast::ArrayExpr) -> Result<Operand, Error> {
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] irgen::array_expr {}", expr);
+        }
         let arr = self.handle_left_val(&expr.arr)?;
 
         // If the array is accessed through a pointer-to-pointer (e.g., a function parameter
@@ -670,6 +884,9 @@ impl FunctionGenerator<'_> {
     /// Looks up the struct type in the registry, finds the member's field index,
     /// and emits a GEP to yield a pointer to that member.
     fn handle_member_expr(&mut self, expr: &ast::MemberExpr) -> Result<Operand, Error> {
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] irgen::member_expr {}", expr);
+        }
         let s = self.handle_left_val(&expr.struct_id)?;
 
         let type_name = s
@@ -709,6 +926,9 @@ impl FunctionGenerator<'_> {
     /// For a simple identifier, looks up the symbol; for array and member
     /// expressions, delegates to the respective handlers.
     fn handle_left_val(&mut self, val: &ast::LeftVal) -> Result<Operand, Error> {
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] irgen::left_val {}", val);
+        }
         match &val.inner {
             ast::LeftValInner::Id(id) => self.lookup_variable(id),
             ast::LeftValInner::ArrayExpr(expr) => self.handle_array_expr(expr),
@@ -716,22 +936,9 @@ impl FunctionGenerator<'_> {
         }
     }
 
-    fn handle_cast_op_expr(&mut self, expr: &ast::expr::CastOpExpr) -> Result<Operand, Error> {
-        let src = self.handle_expr_unit(&expr.expr)?;
-        let target_ts = expr.type_specifier.as_ref().expect("cast missing type");
-        let dtype = Dtype::from(target_ts);
-        let dst = Operand::from(self.fresh_local(dtype.clone()));
-        self.emit_cast(src, dtype, dst.clone());
-        Ok(dst)
-    }
-
     /// Lowers a binary arithmetic expression (`left op right`) to an `i32` temporary.
     fn handle_arith_biop_expr(&mut self, expr: &ast::ArithBiOpExpr) -> Result<Operand, Error> {
-        let left = self.handle_arith_expr(&expr.left)?;
-        let right = self.handle_arith_expr(&expr.right)?;
-        let dst = Operand::from(self.fresh_local(Dtype::I32));
-        self.emit_biop(ArithBinOp::from(&expr.op), left, right, dst.clone());
-        Ok(dst)
+        self.handle_arith_biop_expr_with_depth(expr, 1)
     }
 
     /// Lowers an array index expression to an `i32` operand.

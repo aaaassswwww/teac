@@ -49,7 +49,7 @@ pub struct ArithBiOpExpr {
 #[derive(Debug, Clone)]
 pub enum ArithExprInner {
     ArithBiOpExpr(Box<ArithBiOpExpr>),
-    CastExpr(Box<CastExpr>),
+    ExprUnit(Box<ExprUnit>),
 }
 
 #[derive(Debug, Clone)]
@@ -59,21 +59,9 @@ pub struct ArithExpr {
 }
 
 #[derive(Debug, Clone)]
-pub struct CastOpExpr {
-    pub expr: Box<ExprUnit>,
-    pub type_specifier: Option<TypeSpecifier>
-}
-
-#[derive(Debug, Clone)]
-pub enum CastExprInner {
-    CastOpExpr(Box<CastOpExpr>),
-    ExprUnit(Box<ExprUnit>),
-}
-
-#[derive(Debug, Clone)]
 pub struct CastExpr {
-    pub pos: Pos,
-    pub inner: CastExprInner,
+    pub expr: Box<ExprUnit>,
+    pub target: TypeSpecifier,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +133,7 @@ pub enum ExprUnitInner {
     Float(f32),
     Id(String),
     ArithExpr(Box<ArithExpr>),
+    Cast(Box<CastExpr>),
     FnCall(Box<FnCall>),
     ArrayExpr(Box<ArrayExpr>),
     MemberExpr(Box<MemberExpr>),

@@ -13,16 +13,18 @@ impl IrGenerator<'_> {
     }
 
     pub fn handle_cast_expr_static(expr: &ast::expr::CastExpr) -> Result<i32, Error> {
-        match &expr.inner {
-            ast::expr::CastExprInner::CastOpExpr(expr) => Self::handle_cast_op_expr_static(expr),
-            ast::expr::CastExprInner::ExprUnit(unit) => Self::handle_expr_unit_static(unit),
+        let source = Self::handle_expr_unit_static(&expr.expr)?;
+        match &expr.target.inner {
+            ast::TypeSpecifierInner::BuiltIn(ast::BuiltIn::Int) => Ok(source),
+            ast::TypeSpecifierInner::BuiltIn(ast::BuiltIn::Float) => Err(Error::InvalidCast),
+            _ => Err(Error::InvalidCast),
         }
     }
 
     pub fn handle_arith_expr_static(expr: &ast::ArithExpr) -> Result<i32, Error> {
         match &expr.inner {
             ast::ArithExprInner::ArithBiOpExpr(expr) => Self::handle_arith_biop_expr_static(expr),
-            ast::ArithExprInner::CastExpr(cast) => Self::handle_cast_expr_static(cast),
+            ast::ArithExprInner::ExprUnit(unit) => Self::handle_expr_unit_static(unit),
         }
     }
 
@@ -30,16 +32,6 @@ impl IrGenerator<'_> {
         match &expr.inner {
             ast::BoolExprInner::BoolBiOpExpr(expr) => Self::handle_bool_biop_expr_static(expr),
             ast::BoolExprInner::BoolUnit(unit) => Self::handle_bool_unit_static(unit),
-        }
-    }
-
-    pub fn handle_cast_op_expr_static(expr: &ast::expr::CastOpExpr) -> Result<i32, Error> {
-        let src = Self::handle_expr_unit_static(&expr.expr)?;
-        let target_ts = expr.type_specifier.as_ref().expect("cast missing type");
-
-        match &target_ts.inner {
-            ast::TypeSpecifierInner::BuiltIn(ast::BuiltIn::Int) => Ok(src),
-            _ => Err(Error::InvalidCast),
         }
     }
 
@@ -58,6 +50,7 @@ impl IrGenerator<'_> {
         match &expr.inner {
             ast::ExprUnitInner::Num(num) => Ok(*num),
             ast::ExprUnitInner::ArithExpr(expr) => Self::handle_arith_expr_static(expr),
+            ast::ExprUnitInner::Cast(expr) => Self::handle_cast_expr_static(expr),
             _ => Err(Error::InvalidExprUnit {
                 expr_unit: expr.clone(),
             }),

@@ -108,7 +108,14 @@ pub struct FloatConst {
 
 impl Display for FloatConst {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.val)
+        match &self.dtype {
+            Dtype::F32 => {
+                let as_f32 = self.val as f32;
+                let widened = as_f32 as f64;
+                write!(f, "0x{:016X}", widened.to_bits())
+            }
+            _ => write!(f, "0x{:016X}", self.val.to_bits()),
+        }
     }
 }
 

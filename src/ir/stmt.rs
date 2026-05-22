@@ -481,7 +481,14 @@ impl Display for FBiOpStmt {
             right,
             dst,
         } = self;
-        write!(f, "{dst} = {kind} {} {left}, {right}", dst.dtype())
+        
+        let op = match kind {
+            ArithBinOp::Add => "fadd",
+            ArithBinOp::Sub => "fsub",
+            ArithBinOp::Mul => "fmul",
+            ArithBinOp::SDiv => "fdiv",
+        };
+        write!(f, "{dst} = {op} {} {left}, {right}", dst.dtype())
     }
 }
 
@@ -505,7 +512,17 @@ impl Display for FCmpStmt {
             right,
             dst,
         } = self;
-        write!(f, "{dst} = fcmp {kind} {} {left}, {right}", left.dtype())
+
+        let pred = match kind {
+            CmpPredicate::Eq => "oeq",
+            CmpPredicate::Ne => "one",
+            CmpPredicate::Sgt => "ogt",
+            CmpPredicate::Sge => "oge",
+            CmpPredicate::Slt => "olt",
+            CmpPredicate::Sle => "ole",
+        };
+
+        write!(f, "{dst} = fcmp {pred} {} {left}, {right}", left.dtype())
     }
 }
 
@@ -581,14 +598,14 @@ impl Display for ReturnStmt {
 impl Display for SIToFPStmt {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let Self { src, dst } = self;
-        write!(f, "{dst} = sitofp i32 {src} to float")
+        write!(f, "{dst} = sitofp {} {src} to {}", src.dtype(), dst.dtype())
     }
 }
 
 impl Display for FPToSIStmt {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let Self { src, dst } = self;
-        write!(f, "{dst} = fptosi float {src} to i32")
+        write!(f, "{dst} = fptosi {} {src} to {}", src.dtype(), dst.dtype())
     }
 }
 

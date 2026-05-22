@@ -3,6 +3,10 @@ use crate::asm::error::Error;
 use crate::ir;
 use std::collections::HashMap;
 
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StackSlot {
     pub offset_from_fp: i64,
@@ -19,7 +23,13 @@ impl StackFrame {
     pub fn from_blocks(blocks: &[ir::BasicBlock], layouts: &StructLayouts) -> Result<Self, Error> {
         let mut frame = Self::default();
         let alloca_ptrs = collect_alloca_ptrs(blocks)?;
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] stack::alloca_ptrs count={}", alloca_ptrs.len());
+        }
         for (vreg, dtype) in alloca_ptrs.iter() {
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] stack::alloca vreg={} dtype={}", vreg, dtype);
+            }
             let (size, align) = size_align_of_alloca(dtype, layouts)?;
             frame.alloc_alloca(*vreg, align, size);
         }

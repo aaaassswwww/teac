@@ -22,6 +22,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
 /// Controls which intermediate representation the compiler writes to the output.
 /// The pipeline always runs up to (and including) the chosen stage, then exits.
 #[derive(Copy, Clone, Debug, PartialEq, ValueEnum)]
@@ -109,14 +113,23 @@ fn open_writer(output: &Option<String>) -> Result<Box<dyn Write>> {
 /// failure encountered.
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] start run input={}", cli.input);
+    }
     let source = fs::read_to_string(&cli.input)
         .with_context(|| format!("failed to read '{}'", cli.input))?;
     let mut writer = open_writer(&cli.output)?;
 
     let mut parser = parser::Parser::new(&source);
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] parsing");
+    }
     parser
         .generate()
         .with_context(|| format!("failed to parse '{}'", cli.input))?;
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] parse done");
+    }
 
     // Early exit: the user only wants the AST dump.
     if cli.emit == EmitTarget::Ast {
@@ -138,7 +151,13 @@ fn run() -> Result<()> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     let mut ir_gen = ir::IrGenerator::with_default_passes(ast, source_dir);
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] ir generation");
+    }
     ir_gen.generate().context("failed to generate IR")?;
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] ir generation done");
+    }
 
     // Optimization stage: run the default function-pass pipeline over
     // the freshly generated IR. `Optimizer::with_default_passes` takes
@@ -149,9 +168,15 @@ fn run() -> Result<()> {
     {
         let mut optimizer =
             opt::Optimizer::with_default_passes(&mut ir_gen.module, &ir_gen.registry);
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] optimization");
+        }
         optimizer
             .generate()
             .context("failed to run optimization passes")?;
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] optimization done");
+        }
 
         // Early exit: the user only wants the (optimized) IR dump.
         if cli.emit == EmitTarget::Ir {
@@ -169,7 +194,13 @@ fn run() -> Result<()> {
     };
 
     let mut asm_gen = asm::AArch64AsmGenerator::new(&ir_gen.module, &ir_gen.registry, target);
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] asm generation");
+    }
     asm_gen.generate().context("failed to generate assembly")?;
+    if debug_longcode_enabled() {
+        eprintln!("[dbg] asm generation done");
+    }
     asm_gen
         .output(&mut writer)
         .context("failed to write assembly output")

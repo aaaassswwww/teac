@@ -420,34 +420,30 @@ impl TypeInference<'_> {
             ast::ArithExprInner::ArithBiOpExpr(biop) => {
                 let left = self.type_of_arith_expr(&biop.left)?;
                 let right = self.type_of_arith_expr(&biop.right)?;
-                if left == right {
-                    Ok(left)
-                } else {
-                    Err(Error::TypeMismatch {
-                        symbol: "<arith-expr>".to_string(),
-                        expected: left,
-                        actual: right,
-                    })
+
+                match (&left, &right) {
+                    (Dtype::I32, Dtype::I32) => Ok(Dtype::I32),
+                    (Dtype::F32, Dtype::F32) => Ok(Dtype::F32),
+                    (Dtype::I32, Dtype::F32) | (Dtype::F32, Dtype::I32) => Ok(Dtype::F32),
+                    _ => Err(Error::TypeMismatch { symbol: "<arith_expr>".to_string(), expected: left, actual: right }),
                 }
             }
-            ast::ArithExprInner::CastExpr(expr) => self.type_of_cast_expr(expr),
+            ast::ArithExprInner::ExprUnit(unit) => self.type_of_expr_unit(unit),
         }
     }
 
     fn type_of_cast_expr(&self, expr: &ast::expr::CastExpr) -> Result<Dtype, Error> {
-        match &expr.inner {
-            ast::expr::CastExprInner::CastOpExpr(expr) => self.type_of_cast_op_expr(expr),
-            ast::expr::CastExprInner::ExprUnit(unit) => self.type_of_expr_unit(unit),
-        }
-    }
+        let source = self.type_of_expr_unit(&expr.expr)?;
+        let target = Dtype::from(&expr.target);
 
-    fn type_of_cast_op_expr(&self, expr: &ast::expr::CastOpExpr) -> Result<Dtype, Error> {
-        self.type_of_expr_unit(&expr.expr)?;
-        Ok(expr
-            .type_specifier
-            .as_ref()
-            .map(Dtype::from)
-            .unwrap_or(Dtype::I32))
+        if source == target {
+            return Ok(target);
+        }
+
+        match (&source, &target) {
+            (Dtype::I32, Dtype::F32) | (Dtype::F32, Dtype::I32) => Ok(target),
+            _ => Err(Error::InvalidCast),
+        }
     }
 
     /// Compute the type of a leaf expression unit.
@@ -457,6 +453,7 @@ impl TypeInference<'_> {
             ast::ExprUnitInner::Float(_) => Ok(Dtype::F32),
             ast::ExprUnitInner::Id(id) => self.resolve_variable(id),
             ast::ExprUnitInner::ArithExpr(expr) => self.type_of_arith_expr(expr),
+            ast::ExprUnitInner::Cast(cast) => self.type_of_cast_expr(cast),
             ast::ExprUnitInner::FnCall(call) => self.type_of_fn_call(call),
             ast::ExprUnitInner::ArrayExpr(expr) => self.type_of_array_expr(expr),
             ast::ExprUnitInner::MemberExpr(expr) => self.type_of_member_expr(expr),

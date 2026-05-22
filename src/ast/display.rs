@@ -9,7 +9,7 @@ impl Display for BuiltIn {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             BuiltIn::Int => write!(f, "int"),
-            BuiltIn::Float => write!(f, "int"),
+            BuiltIn::Float => write!(f, "float"),
         }
     }
 }
@@ -73,32 +73,9 @@ impl Display for ComOp {
     }
 }
 
-// 为 CastOpExpr 实现 Display
-impl Display for CastOpExpr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        // 格式: (expr as target_type)
-        let type_str = self
-            .type_specifier
-            .as_ref()
-            .map_or("unknown".to_string(), |ts| ts.to_string());
-        write!(f, "({} as {})", self.expr, type_str)
-    }
-}
-
-// 为 CastExprInner 实现 Display
-impl Display for CastExprInner {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        match self {
-            CastExprInner::CastOpExpr(op) => write!(f, "{}", op),
-            CastExprInner::ExprUnit(unit) => write!(f, "{}", unit),
-        }
-    }
-}
-
-// 为 CastExpr 实现 Display
 impl Display for CastExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{}", self.inner)
+        write!(f, "({} as {})", self.expr, self.target)
     }
 }
 
@@ -112,7 +89,7 @@ impl Display for ArithExprInner {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             ArithExprInner::ArithBiOpExpr(expr) => write!(f, "{}", expr),
-            ArithExprInner::CastExpr(cast) => write!(f, "{}", cast),
+            ArithExprInner::ExprUnit(unit) => write!(f, "{}", unit),
         }
     }
 }
@@ -242,6 +219,7 @@ impl Display for ExprUnitInner {
             ExprUnitInner::Float(fl) => write!(f, "{}", fl),
             ExprUnitInner::Id(id) => write!(f, "{}", id),
             ExprUnitInner::ArithExpr(a) => write!(f, "{}", a),
+            ExprUnitInner::Cast(c) => write!(f, "{}", c),
             ExprUnitInner::FnCall(fc) => write!(f, "{}", fc),
             ExprUnitInner::ArrayExpr(ae) => write!(f, "{}", ae),
             ExprUnitInner::MemberExpr(me) => write!(f, "{}", me),

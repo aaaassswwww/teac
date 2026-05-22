@@ -19,6 +19,10 @@ use std::collections::HashMap;
 use std::io::Write;
 use types::dtype_to_regsize;
 
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
 struct GeneratedGlobal {
     symbol: String,
     data: GlobalData,
@@ -59,10 +63,24 @@ impl<'a> Generator for AArch64AsmGenerator<'a> {
     type Error = Error;
 
     fn generate(&mut self) -> Result<(), Error> {
+        if debug_longcode_enabled() {
+            eprintln!(
+                "[dbg] asm::generate structs={} globals={} funcs={}",
+                self.registry.struct_types.len(),
+                self.module.global_list.len(),
+                self.module.function_list.len()
+            );
+        }
         let layouts = StructLayouts::from_struct_types(&self.registry.struct_types)?;
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] asm::layouts ready");
+        }
 
         self.globals.clear();
         for (name, def) in &self.module.global_list {
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] asm::handle_global {} dtype={}", name, def.dtype);
+            }
             self.globals
                 .push(Self::handle_global(&layouts, name, def, self.target)?);
         }
@@ -75,6 +93,14 @@ impl<'a> Generator for AArch64AsmGenerator<'a> {
             let Some(body) = func.body.as_ref() else {
                 continue;
             };
+            if debug_longcode_enabled() {
+                eprintln!(
+                    "[dbg] asm::handle_function {} blocks={} next_vreg={}",
+                    func.link_name,
+                    body.blocks.len(),
+                    body.next_vreg
+                );
+            }
             self.functions.push(Self::handle_function(
                 &layouts,
                 &func.link_name,
@@ -211,8 +237,14 @@ impl<'a> AArch64AsmGenerator<'a> {
         body: &ir::FunctionBody,
         target: Target,
     ) -> Result<GeneratedFunction, Error> {
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] asm::handle_function enter {}", link_name);
+        }
         let symbol = target.mangle_symbol(link_name);
         let mut frame = StackFrame::from_blocks(&body.blocks, layouts)?;
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] asm::stack frame built {}", link_name);
+        }
         let mut next_vreg = body.next_vreg;
         let mut cond_map: HashMap<usize, Cond> = HashMap::new();
         let mut insts: Vec<Inst> = Vec::new();
@@ -228,14 +260,27 @@ impl<'a> AArch64AsmGenerator<'a> {
                 next_vreg: &mut next_vreg,
                 cond_map: &mut cond_map,
             };
+            if debug_longcode_enabled() {
+                eprintln!("[dbg] asm::phi lowering {}", link_name);
+            }
             phi_lowering::lower_function_blocks(&mut ctx, &body.blocks)?;
         }
 
         let alloc = register_allocator::allocate(&insts);
+        if debug_longcode_enabled() {
+            eprintln!(
+                "[dbg] asm::register allocation {} spilled={}",
+                link_name,
+                alloc.spilled.len()
+            );
+        }
         for v in alloc.spilled.iter().copied() {
             frame.alloc_spill(v, 8, 8);
         }
         let insts = rewrite_insts(&insts, &alloc, &frame)?;
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] asm::handle_function done {}", link_name);
+        }
 
         Ok(GeneratedFunction {
             symbol,

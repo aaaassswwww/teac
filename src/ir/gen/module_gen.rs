@@ -24,6 +24,10 @@ use std::fs;
 use std::io::Write;
 use std::rc::Rc;
 
+fn debug_longcode_enabled() -> bool {
+    std::env::var_os("TEAC_DEBUG_LONGCODE2").is_some()
+}
+
 /// Implements the two-phase `Generator` trait for the module-level IR generator.
 impl Generator for IrGenerator<'_> {
     type Error = Error;
@@ -84,6 +88,12 @@ impl Generator for IrGenerator<'_> {
         // Pass 3: generate IR bodies for every function definition.
         for elem in &input.elements {
             if let ast::ProgramElementInner::FnDef(fn_def) = &elem.inner {
+                if debug_longcode_enabled() {
+                    eprintln!(
+                        "[dbg] ir::pass3 function {} infer begin",
+                        fn_def.fn_decl.identifier
+                    );
+                }
                 // Run the type inference pass to resolve all local variable
                 // types before IR generation.  The pass sees the same name
                 // environment as `FunctionGenerator` — struct/function types
@@ -92,16 +102,37 @@ impl Generator for IrGenerator<'_> {
                 // consistently in both passes.
                 let resolved_types =
                     type_infer::infer_function(&self.registry, &self.module.global_list, fn_def)?;
+                if debug_longcode_enabled() {
+                    eprintln!(
+                        "[dbg] ir::pass3 function {} infer done resolved={}",
+                        fn_def.fn_decl.identifier,
+                        resolved_types.len()
+                    );
+                }
 
                 // Use a scoped FunctionGenerator so its temporary state is
                 // dropped before we mutably borrow `self.module` below.
                 let body = {
+                    if debug_longcode_enabled() {
+                        eprintln!(
+                            "[dbg] ir::pass3 function {} irgen begin",
+                            fn_def.fn_decl.identifier
+                        );
+                    }
                     let mut function_generator = FunctionGenerator::new(
                         &self.registry,
                         &self.module.global_list,
                         resolved_types,
                     );
                     function_generator.generate(fn_def)?;
+                    if debug_longcode_enabled() {
+                        eprintln!(
+                            "[dbg] ir::pass3 function {} irgen done irs={} next_vreg={}",
+                            fn_def.fn_decl.identifier,
+                            function_generator.irs.len(),
+                            function_generator.next_vreg
+                        );
+                    }
 
                     FunctionBody {
                         arguments: function_generator.arguments,
@@ -481,6 +512,9 @@ impl IrGenerator<'_> {
     ///   [`Error::DeclDefMismatch`].
     fn handle_fn_def(&mut self, stmt: &ast::FnDef) -> Result<(), Error> {
         let identifier = stmt.fn_decl.identifier.clone();
+        if debug_longcode_enabled() {
+            eprintln!("[dbg] ir::handle_fn_def {}", identifier);
+        }
 
         match self.registry.function_types.get(&identifier) {
             None => self.handle_fn_decl(&stmt.fn_decl, false)?,
@@ -513,6 +547,13 @@ impl IrGenerator<'_> {
     ///   struct's identifier.
     fn handle_struct_def(&mut self, struct_def: &ast::StructDef) -> Result<(), Error> {
         let identifier = struct_def.identifier.clone();
+        if debug_longcode_enabled() {
+            eprintln!(
+                "[dbg] ir::handle_struct_def {} fields={}",
+                identifier,
+                struct_def.decls.len()
+            );
+        }
         let mut elements = Vec::new();
 
         for (index, decl) in struct_def.decls.iter().enumerate() {
