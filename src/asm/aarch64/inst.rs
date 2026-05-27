@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use super::types::{Addr, BinOp, Cond, IndexOperand, Operand, RegSize, Register};
+use super::types::{Addr, BinOp, Cond, FBinOp, IndexOperand, Operand, RegSize, Register};
 use crate::common::graph::CfgNode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Inst {
     Label(String),
 
@@ -19,6 +20,16 @@ pub enum Inst {
         dst: Register,
         lhs: Register,
         rhs: Operand,
+    },
+
+    /// Single-precision floating-point binary operation, e.g.
+    /// `fadd s_d, s_n, s_m`.  Both operands and the destination live in
+    /// the Fpr bank; the result is always 32-bit (`RegSize::S32`).
+    FBinOp {
+        op: FBinOp,
+        dst: Register,
+        lhs: Register,
+        rhs: Register,
     },
 
     Ldr {
@@ -49,6 +60,36 @@ pub enum Inst {
         size: RegSize,
         lhs: Register,
         rhs: Operand,
+    },
+
+    /// Single-precision floating-point comparison `fcmp s_n, s_m`.
+    /// Sets NZCV, which is later consumed by a `B { Cond, label }` arm.
+    FCmp {
+        lhs: Register,
+        rhs: Register,
+    },
+
+    /// `scvtf s_d, w_n` — convert a signed 32-bit integer to a
+    /// single-precision float.
+    Scvtf {
+        dst: Register,
+        src: Register,
+    },
+
+    /// `fcvtzs w_d, s_n` — convert a single-precision float to a signed
+    /// 32-bit integer, rounding toward zero.
+    Fcvtzs {
+        dst: Register,
+        src: Register,
+    },
+
+    /// `fmov s_d, s_n` (Fpr-to-Fpr) or `fmov s_d, w_n` (Gpr-to-Fpr).
+    /// Used in phi lowering, in the AAPCS64 entry/exit shims for `f32`
+    /// arguments and return values, and to materialise a float constant
+    /// from a literal `Operand::Immediate`.
+    Fmov {
+        dst: Register,
+        src: Operand,
     },
 
     B {
@@ -146,6 +187,10 @@ impl Inst {
                 add_reg(&mut used, lhs);
                 add_operand(&mut used, rhs);
             }
+            Inst::FBinOp { lhs, rhs, .. } => {
+                add_reg(&mut used, lhs);
+                add_reg(&mut used, rhs);
+            }
             Inst::Ldr { addr, .. } => add_addr(&mut used, addr),
             Inst::Str { src, addr, .. } => {
                 add_reg(&mut used, src);
@@ -162,6 +207,12 @@ impl Inst {
                 add_reg(&mut used, lhs);
                 add_operand(&mut used, rhs);
             }
+            Inst::FCmp { lhs, rhs } => {
+                add_reg(&mut used, lhs);
+                add_reg(&mut used, rhs);
+            }
+            Inst::Scvtf { src, .. } | Inst::Fcvtzs { src, .. } => add_reg(&mut used, src),
+            Inst::Fmov { src, .. } => add_operand(&mut used, src),
             Inst::Label(_)
             | Inst::B { .. }
             | Inst::BCond { .. }
@@ -180,9 +231,13 @@ impl Inst {
         match self {
             Inst::Mov { dst, .. }
             | Inst::BinOp { dst, .. }
+            | Inst::FBinOp { dst, .. }
             | Inst::Ldr { dst, .. }
             | Inst::Lea { dst, .. }
-            | Inst::Gep { dst, .. } => {
+            | Inst::Gep { dst, .. }
+            | Inst::Scvtf { dst, .. }
+            | Inst::Fcvtzs { dst, .. }
+            | Inst::Fmov { dst, .. } => {
                 if let Register::Virtual(v) = dst {
                     defined.insert(*v);
                 }

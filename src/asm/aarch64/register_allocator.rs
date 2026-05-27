@@ -9,8 +9,23 @@ use crate::common::graph::{BackwardLiveness, Graph, VregSet};
 const NUM_COLORS: usize = 8;
 const ALLOCATABLE_REGS: [u8; NUM_COLORS] = [8, 9, 10, 11, 12, 13, 14, 15];
 
+/// Floating-point virtual registers are coloured against `s8`–`s15`,
+/// which correspond to the callee-saved `d8`–`d15` band of the AAPCS64
+/// FP register file.  Picking callee-saved registers means a `bl` does
+/// not need to wrap them in caller-saved spill code.
+#[allow(dead_code)]
+const ALLOCATABLE_FPRS: [u8; NUM_COLORS] = [8, 9, 10, 11, 12, 13, 14, 15];
+
 const SCRATCH0: u8 = 16;
 const SCRATCH1: u8 = 17;
+
+/// Floating-point scratch pair (s16 / s17) used during spill / reload of
+/// Fpr vregs.  Caller-saved, so the surrounding `bl` does not need to
+/// preserve them.
+#[allow(dead_code)]
+const F_SCRATCH0: u8 = 16;
+#[allow(dead_code)]
+const F_SCRATCH1: u8 = 17;
 
 #[derive(Debug, Clone)]
 pub struct AllocationResult {
@@ -341,7 +356,20 @@ impl<'a> InstRewriter<'a> {
                 lhs,
                 rhs,
             } => self.rewrite_binop(*op, *size, *dst, *lhs, *rhs)?,
+            Inst::FBinOp { .. } => {
+                todo!("asmt-4: rewrite Inst::FBinOp through the Fpr colouring + spill path")
+            }
             Inst::Cmp { size, lhs, rhs } => self.rewrite_cmp(*size, *lhs, *rhs)?,
+            Inst::FCmp { .. } => todo!("asmt-4: rewrite Inst::FCmp through the Fpr path"),
+            Inst::Scvtf { .. } => {
+                todo!("asmt-4: rewrite Inst::Scvtf — dst is Fpr, src is Gpr")
+            }
+            Inst::Fcvtzs { .. } => {
+                todo!("asmt-4: rewrite Inst::Fcvtzs — dst is Gpr, src is Fpr")
+            }
+            Inst::Fmov { .. } => {
+                todo!("asmt-4: rewrite Inst::Fmov — dst is Fpr, src may be Fpr or Gpr")
+            }
             Inst::Ldr { size, dst, addr } => self.rewrite_ldr(*size, *dst, addr)?,
             Inst::Str { size, src, addr } => self.rewrite_str(*size, *src, addr)?,
             Inst::Lea { dst, addr } => self.rewrite_lea(*dst, addr)?,

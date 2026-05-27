@@ -819,13 +819,21 @@ macro_rules! full_tests {
     };
 }
 
-/// Declares a batch of assignment tests.  Each test first verifies
-/// that `teac --emit ast` succeeds and the AST contains expected
-/// identifiers, then compiles the generated IR with `clang`, runs
-/// it, and compares the output against the `.out` golden file.
+/// Declares a batch of assignment tests with up to three layered
+/// verification stages.
 ///
-/// With `--features ast-only`, only the AST parsing stage runs (for use
-/// before IR generation is implemented).
+/// 1. **AST parse** (always): verifies `teac --emit ast` succeeds and the
+///    AST contains the expected identifiers.
+/// 2. **IR via `clang`** (when `--features asm-only` is set): emits IR,
+///    compiles it with `clang`, runs the binary, and compares against the
+///    `.out` golden.  This is the asmt-3 verification path.
+/// 3. **End-to-end via teac's asm + native gcc/QEMU** (default): emits
+///    aarch64 assembly with teac itself, links with the platform-specific
+///    toolchain, and runs.  This is the asmt-4 verification path.
+///
+/// With `--features ast-only`, only stage 1 runs.  With
+/// `--features asm-only`, stages 1 and 2 run.  With no extra feature,
+/// stages 1 and 3 run.
 #[allow(unused_macros)]
 macro_rules! asmt_tests {
     ($($name:ident => [$($ast_pat:literal),* $(,)?]),* $(,)?) => {
@@ -833,8 +841,14 @@ macro_rules! asmt_tests {
             #[test]
             fn $name() {
                 test_ast_parse(stringify!($name), &[$($ast_pat),*]);
-                if !cfg!(feature = "ast-only") {
+                if cfg!(feature = "ast-only") {
+                    return;
+                }
+                if cfg!(feature = "asm-only") {
                     test_ir(stringify!($name));
+                } else {
+                    ensure_std();
+                    test_single(stringify!($name));
                 }
             }
         )*

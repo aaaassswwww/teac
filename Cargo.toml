@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 return-type-inference = []
 ast-only = []
+asm-only = []
 float = []
 for-loop = []
 struct-method = []

@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use super::inst::Inst;
-use super::types::{Addr, BinOp, Cond, IndexOperand, Operand, RegSize, Register};
+use super::types::{Addr, BinOp, Cond, FBinOp, IndexOperand, Operand, RegSize, Register};
 use crate::asm::error::Error;
 use crate::common::Target;
 
@@ -53,10 +53,12 @@ impl<W: Write> AsmPrinter<W> {
             Register::Physical(31) => match size {
                 RegSize::W32 => "wzr".to_string(),
                 RegSize::X64 => "xzr".to_string(),
+                RegSize::S32 => unreachable!("zero register has no FP form"),
             },
             Register::Physical(n) => match size {
                 RegSize::W32 => format!("w{n}"),
                 RegSize::X64 => format!("x{n}"),
+                RegSize::S32 => format!("s{n}"),
             },
             Register::Virtual(_) => {
                 unreachable!("virtual regs should be eliminated before emission")
@@ -90,7 +92,7 @@ impl<W: Write> AsmPrinter<W> {
             return false;
         }
         let scale = match size {
-            RegSize::W32 => 4,
+            RegSize::W32 | RegSize::S32 => 4,
             RegSize::X64 => 8,
         };
         offset % scale == 0 && (offset / scale) <= 4095
@@ -534,6 +536,44 @@ impl<W: Write> AsmPrinter<W> {
         Ok(())
     }
 
+    /// Emits a single-precision floating-point binary operation.  The
+    /// asmt-4 solution maps the four [`FBinOp`] variants directly to the
+    /// aarch64 mnemonics `fadd` / `fsub` / `fmul` / `fdiv`.
+    fn emit_fbinop(
+        &mut self,
+        _op: FBinOp,
+        _dst: Register,
+        _lhs: Register,
+        _rhs: Register,
+    ) -> Result<(), Error> {
+        todo!("asmt-4: emit fadd/fsub/fmul/fdiv s_d, s_n, s_m")
+    }
+
+    /// Emits a single-precision floating-point comparison `fcmp s_n, s_m`.
+    /// The result is implicit in NZCV and is consumed by a subsequent
+    /// `BCond` arm.
+    fn emit_fcmp(&mut self, _lhs: Register, _rhs: Register) -> Result<(), Error> {
+        todo!("asmt-4: emit fcmp s_n, s_m")
+    }
+
+    /// Emits `scvtf s_d, w_n` — signed 32-bit integer to single-precision
+    /// float conversion.
+    fn emit_scvtf(&mut self, _dst: Register, _src: Register) -> Result<(), Error> {
+        todo!("asmt-4: emit scvtf s_d, w_n")
+    }
+
+    /// Emits `fcvtzs w_d, s_n` — single-precision float to signed 32-bit
+    /// integer conversion (truncating toward zero).
+    fn emit_fcvtzs(&mut self, _dst: Register, _src: Register) -> Result<(), Error> {
+        todo!("asmt-4: emit fcvtzs w_d, s_n")
+    }
+
+    /// Emits `fmov s_d, s_n` (Fpr-to-Fpr) or `fmov s_d, w_n`
+    /// (Gpr-to-Fpr) depending on the source operand's register class.
+    fn emit_fmov(&mut self, _dst: Register, _src: Operand) -> Result<(), Error> {
+        todo!("asmt-4: emit fmov s_d, {{s|w}}_n")
+    }
+
     fn emit_save_caller_regs(&mut self) -> Result<(), Error> {
         writeln!(self.writer, "\tstr x15, [sp, #-16]!")?;
         writeln!(self.writer, "\tstp x13, x14, [sp, #-16]!")?;
@@ -565,6 +605,7 @@ impl<W: Write> AsmPrint for AsmPrinter<W> {
                 lhs,
                 rhs,
             } => self.emit_binop(*op, *size, *dst, *lhs, *rhs)?,
+            Inst::FBinOp { op, dst, lhs, rhs } => self.emit_fbinop(*op, *dst, *lhs, *rhs)?,
             Inst::Ldr { size, dst, addr } => self.emit_load(*size, *dst, addr)?,
             Inst::Str { size, src, addr } => self.emit_store(*size, *src, addr)?,
             Inst::Lea { dst, addr } => self.emit_lea(*dst, addr)?,
@@ -575,6 +616,10 @@ impl<W: Write> AsmPrint for AsmPrinter<W> {
                 scale,
             } => self.emit_gep(*dst, *base, *index, *scale)?,
             Inst::Cmp { size, lhs, rhs } => self.emit_cmp(*size, *lhs, *rhs)?,
+            Inst::FCmp { lhs, rhs } => self.emit_fcmp(*lhs, *rhs)?,
+            Inst::Scvtf { dst, src } => self.emit_scvtf(*dst, *src)?,
+            Inst::Fcvtzs { dst, src } => self.emit_fcvtzs(*dst, *src)?,
+            Inst::Fmov { dst, src } => self.emit_fmov(*dst, *src)?,
             Inst::B { label } => writeln!(self.writer, "\tb {label}")?,
             Inst::BCond { cond, label } => {
                 writeln!(self.writer, "\tb.{} {label}", self.cond_suffix(*cond))?
